@@ -1,0 +1,23 @@
+services:
+  sesklon:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - API_KEY=            # boş = açık; dışarı açacaksan bir anahtar yaz
+      - PRELOAD=1           # modeli açılışta yükle
+      - T3_MODEL=v3
+      # - DEVICE=cpu        # GPU yoksa zorla
+    volumes:
+      - sesklon-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  sesklon-data:

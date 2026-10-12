@@ -1,0 +1,9 @@
+chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+soundfile>=0.12
+numpy
+num2words>=0.5.13
+librosa>=0.10
+scipy>=1.10
