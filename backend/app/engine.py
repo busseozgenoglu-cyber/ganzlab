@@ -279,6 +279,9 @@ def _filter_kwargs(fn, kwargs: dict) -> dict:
     return {k: v for k, v in kwargs.items() if k in params}
 
 
+# Duygu profillerinin tanımlandığı nötr ayarlar (SynthOptions varsayılanları): profil = nötr + fark
+NEUTRAL_SETTINGS = {"exaggeration": 0.5, "cfg_weight": 0.45, "temperature": 0.8}
+
 MIN_CHARS_PER_SEC = 6.0
 MAX_CHARS_PER_SEC = 28.0
 
@@ -1078,12 +1081,15 @@ class Engine:
         kw = dict(base)
         speed = 1.0
         if profile is not None:
-            if profile.exaggeration is not None:
-                kw["exaggeration"] = profile.exaggeration
-            if profile.cfg_weight is not None:
-                kw["cfg_weight"] = profile.cfg_weight
-            if profile.temperature is not None:
-                kw["temperature"] = profile.temperature
+            # Profil değerleri varsayılan ayarlara (NEUTRAL_SETTINGS) göre tanımlıdır ve kullanıcının ayarının ÜSTÜNE
+            # fark olarak eklenir: [heyecanlı] varsayılanda 0,5 → 0,7 iken kullanıcı 0,8 seçtiyse 1,0'a (sınırla 0,95)
+            # çıkar. Eskiden mutlak yazılıyordu; her cümlesi etiketli metinde ayar çubukları hiç etki etmiyordu.
+            for key in ("exaggeration", "cfg_weight", "temperature"):
+                target = getattr(profile, key)
+                if target is not None:
+                    kw[key] = float(kw.get(key, NEUTRAL_SETTINGS[key])) + (float(target) - NEUTRAL_SETTINGS[key])
+            if "temperature" in kw:
+                kw["temperature"] = min(1.2, max(0.5, float(kw["temperature"])))
             # off modunda tempo yalnızca [hızlı]/[yavaş] etiketleriyle değişir (zaman germe yapaylık ekliyor)
             if fx != "off" or profile.name in ("hızlı", "yavaş"):
                 speed = profile.speed
