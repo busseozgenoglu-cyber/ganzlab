@@ -12,6 +12,16 @@ FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", BASE_DIR.parent / "frontend" / "
 API_KEY = os.getenv("API_KEY", "").strip()          # boşsa kimlik doğrulama yok
 DEVICE = os.getenv("DEVICE", "").strip() or None    # cuda | mps | cpu (boş = otomatik)
 T3_MODEL = os.getenv("T3_MODEL", "v3")              # Chatterbox Multilingual v3 / v2
+
+# Sentez arka ucu (app/backends): chatterbox (PyTorch, varsayılan) | chatterbox-mlx (Apple Silicon) | f5-tr | xtts | fake
+TTS_BACKEND = os.getenv("TTS_BACKEND", "chatterbox").strip() or "chatterbox"
+T3_FINETUNED = os.getenv("T3_FINETUNED", "").strip() or None          # ince ayarlı T3 ağırlıkları (.safetensors / .pt)
+T3_EMOTION_TAGS = os.getenv("T3_EMOTION_TAGS", "0") == "1"           # ince ayar verisindeki "[mutlu] " öneki metne eklensin mi
+CHATTERBOX_LOCAL_DIR = os.getenv("CHATTERBOX_LOCAL_DIR", "").strip() or None   # tüm ağırlıklar yerel klasörden
+MLX_MODEL = os.getenv("MLX_MODEL", "mlx-community/chatterbox-multilingual-v3").strip()
+F5_TR_CKPT = os.getenv("F5_TR_CKPT", "").strip() or None              # F5-TTS Türkçe ağırlık dosyası (.safetensors)
+F5_TR_VOCAB = os.getenv("F5_TR_VOCAB", "").strip() or None            # F5-TTS Türkçe vocab.txt
+XTTS_MODEL = os.getenv("XTTS_MODEL", "tts_models/multilingual/multi-dataset/xtts_v2").strip()
 MAX_REF_SECONDS = float(os.getenv("MAX_REF_SECONDS", "15"))
 MAX_TEXT_CHARS = int(os.getenv("MAX_TEXT_CHARS", "5000"))
 CHUNK_CHARS = int(os.getenv("CHUNK_CHARS", "170"))

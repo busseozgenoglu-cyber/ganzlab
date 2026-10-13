@@ -330,21 +330,40 @@ class SynthOptions:
 
 
 class Engine:
-    def __init__(self) -> None:
-        self.device = pick_device()
+    def __init__(self, backend: str | None = None) -> None:
+        from . import backends
+
+        self.backend_name = backends.normalize_name(backend if backend is not None else config.TTS_BACKEND)
+        self.device = pick_device() if self._backend_needs_torch() else (config.DEVICE or "cpu")
         self._tts = None
         self._vc = None
         self._lock = threading.Lock()
         self._load_lock = threading.Lock()
         self.loading = False
         self.load_error: str | None = None
-        self.model_name = f"chatterbox-multilingual-{config.T3_MODEL}"
+        self.model_name = self._initial_model_name()
         self._ref_cache: dict[str, tuple[float, np.ndarray | None, np.ndarray | None]] = {}
         self._ltas_cache: dict[str, tuple[float, np.ndarray]] = {}
         self._cps_history: dict[str, list[tuple[int, float]]] = {}   # ses → (karakter, saniye) geçmişi (QC eşiği)
         self._default_conds = None
-        _patch_torch_load_for(self.device)
-        log.info("SesKlon motoru hazır • cihaz=%s • model=%s", self.device, self.model_name)
+        if self._backend_needs_torch():
+            _patch_torch_load_for(self.device)
+        log.info("SesKlon motoru hazır • cihaz=%s • arka uç=%s • model=%s", self.device, self.backend_name,
+                 self.model_name)
+
+    def _backend_needs_torch(self) -> bool:
+        from . import backends
+
+        try:
+            return bool(backends.get_class(self.backend_name).needs_torch)
+        except Exception:  # noqa: BLE001 - bozuk arka uç modülü: yükleme sırasında raporlanır
+            return True
+
+    def _initial_model_name(self) -> str:
+        if self.backend_name == "chatterbox":
+            name = f"chatterbox-multilingual-{config.T3_MODEL}"
+            return f"{name}+ince-ayar" if config.T3_FINETUNED else name
+        return self.backend_name
 
     # ---------- durum / yükleme ----------
     @property
@@ -352,21 +371,22 @@ class Engine:
         return self._tts is not None
 
     def tts(self):
+        """Sentez modelini (seçili arka ucu) tembel yükler; ``model.generate`` / ``model.sr`` arayüzü (bkz. app/backends)."""
         if self._tts is None:
             with self._load_lock:
                 if self._tts is None:
-                    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+                    from . import backends
 
                     self.loading = True
                     t0 = time.time()
-                    log.info("Chatterbox Multilingual yükleniyor (%s)…", self.device)
+                    log.info("Sentez arka ucu yükleniyor: %s (%s)…", self.backend_name, self.device)
                     try:
-                        kwargs = _filter_kwargs(
-                            ChatterboxMultilingualTTS.from_pretrained,
-                            {"device": self.device, "t3_model": config.T3_MODEL},
-                        )
-                        self._tts = ChatterboxMultilingualTTS.from_pretrained(**kwargs)
+                        self._tts = backends.create(self.backend_name, device=self.device)
                         self.load_error = None
+                        try:
+                            self.model_name = self._tts.model_id or self.model_name
+                        except Exception:  # noqa: BLE001
+                            pass
                         # Varsayılan (klonsuz) ses koşulları: her klon üretimi model.conds'u ezer; referanssız
                         # üretimde bunları geri yükleyerek "varsayılan ses" hep aynı kalır.
                         try:
@@ -375,7 +395,7 @@ class Engine:
                             self._default_conds = copy.deepcopy(getattr(self._tts, "conds", None))
                         except Exception:  # noqa: BLE001
                             self._default_conds = None
-                        log.info("Model yüklendi (%.1f sn)", time.time() - t0)
+                        log.info("Model yüklendi (%.1f sn): %s", time.time() - t0, self.model_name)
                     except Exception as e:  # noqa: BLE001
                         self.load_error = str(e)
                         raise
@@ -832,6 +852,7 @@ class Engine:
                 kw["audio_prompt_path"] = str(ref_path)
             elif self._default_conds is not None and hasattr(model, "conds"):
                 model.conds = self._default_conds      # klonsuz üretim: varsayılan sesi geri yükle
+            kw["emotion"] = ref_emotion or ch.emotion      # yalnızca bunu tanımlayan arka uçlar alır (ince ayar etiketi)
             kw = _filter_kwargs(model.generate, kw)
             log.info("Parça %d/%d (%d kar.) duygu=%s×%.2f ref=%s ex=%.2f cfg=%.2f hız=%.2f%s",
                      i + 1, n, len(ch.text), ch.emotion or "-", ch.intensity, ref_src,
@@ -1162,13 +1183,22 @@ class Engine:
     def _seed(self, seed: int) -> None:
         import random
 
-        import torch
-
         random.seed(seed)
         np.random.seed(seed % (2 ** 32))
-        torch.manual_seed(seed)
-        if self.device == "cuda":
-            torch.cuda.manual_seed_all(seed)
+        try:
+            import torch
+
+            torch.manual_seed(seed)
+            if self.device == "cuda":
+                torch.cuda.manual_seed_all(seed)
+        except ImportError:          # torch'suz arka uçlar (MLX, sahte)
+            pass
+        model = self._tts
+        if model is not None and hasattr(model, "seed"):
+            try:
+                model.seed(int(seed))        # arka ucun kendi üreteci (mlx.random vb.)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _pause_only_ms(text: str) -> int:

@@ -30,7 +30,8 @@ gerçek nefesini verir. Sözleşme: ``docs/SOZLESME.md`` bölüm 4.
   kadar düzse (spektral düzlük ≈ taban düzlüğü) o bitiş yankı kanıtı sayılmaz. Bitişlerin 75. yüzdeliği:
   > 25 dB düşük, 15–25 orta, < 15 yüksek.
 * F0: ``librosa.pyin`` (60–450 Hz), 16 kHz'e indirilmiş, ilk konuşmadan itibaren en fazla 30 sn; yalnızca konuşma
-  karelerindeki sesli kareler. pyin nefesli/gürültülü seste sesli kare bulamazsa yin perdesi, o perdedeki
+  karelerindeki sesli kareler. ``range_semitones`` = p5–p95 aralığı (yarım ton), ``std_semitones`` = perdenin medyana
+  göre yarım ton cinsinden standart sapması (tonlama canlılığı; kıyaslama betiği ``app.bench`` bunu kullanır). pyin nefesli/gürültülü seste sesli kare bulamazsa yin perdesi, o perdedeki
   periyodiklikle doğrulanarak kullanılır. Etiket: medyan < 165 erkek, > 185 kadın, arası belirsiz.
 * Konuşma hızı: 300–2500 Hz (ünlü bölgesi) RMS zarfı 8 Hz alçak geçirenle yumuşatılır; konuşma içindeki tepeler
   (hece çekirdekleri, ≥ 80 ms arayla, belirginlik = eşik payının %15'i ≈ 1.8 dB) / konuşma süresi.
@@ -516,8 +517,8 @@ def _yin_fallback(librosa, y: np.ndarray, sr: int, fl: int, hop: int, sp: np.nda
 
 def _f0_stats(o: _Olcum) -> tuple[dict, int]:
     """pyin ile F0 istatistikleri; ikinci değer ölçülen sesli kare sayısı."""
-    empty = {"median_hz": 0.0, "min_hz": 0.0, "max_hz": 0.0, "range_semitones": 0.0, "voiced_ratio": 0.0,
-             "label": "belirsiz"}
+    empty = {"median_hz": 0.0, "min_hz": 0.0, "max_hz": 0.0, "range_semitones": 0.0, "std_semitones": 0.0,
+             "voiced_ratio": 0.0, "label": "belirsiz"}
     if not o.speech.any():
         return empty, 0
     try:
@@ -559,9 +560,13 @@ def _f0_stats(o: _Olcum) -> tuple[dict, int]:
     med = float(np.median(v))
     p5, p95 = (float(q) for q in np.percentile(v, [5, 95]))
     rng = 12.0 * math.log2(p95 / p5) if p5 > 0 else 0.0
+    # Tonlama canlılığı: perdenin medyana göre yarım ton cinsinden standart sapması (aralıktan daha kararlı;
+    # birkaç uç kare aralığı şişirir, sapma ise konuşmanın bütününe bakar)
+    std_st = float(np.std(12.0 * np.log2(np.maximum(v, 1e-6) / med))) if med > 0 else 0.0
     label = "erkek" if med < 165.0 else ("kadın" if med > 185.0 else "belirsiz")
     return {"median_hz": _num(med, 1), "min_hz": _num(p5, 1), "max_hz": _num(p95, 1),
-            "range_semitones": _num(rng, 1), "voiced_ratio": _num(min(vr, 1.0), 2), "label": label}, nv
+            "range_semitones": _num(rng, 1), "std_semitones": _num(std_st, 2),
+            "voiced_ratio": _num(min(vr, 1.0), 2), "label": label}, nv
 
 
 def _speaking_rate(o: _Olcum) -> float:
@@ -805,8 +810,8 @@ def _empty_result(duration: float) -> dict:
         "duration": _num(duration, 2), "speech_ratio": 0.0, "snr_db": 0.0, "noise_floor_dbfs": DB_FLOOR,
         "peak_dbfs": DB_FLOOR, "rms_dbfs": DB_FLOOR, "clipping_ratio": 0.0, "dc_offset": 0.0, "bandwidth_hz": 0,
         "reverb": "düşük",
-        "f0": {"median_hz": 0.0, "min_hz": 0.0, "max_hz": 0.0, "range_semitones": 0.0, "voiced_ratio": 0.0,
-               "label": "belirsiz"},
+        "f0": {"median_hz": 0.0, "min_hz": 0.0, "max_hz": 0.0, "range_semitones": 0.0, "std_semitones": 0.0,
+               "voiced_ratio": 0.0, "label": "belirsiz"},
         "speaking_rate": {"syllables_per_sec": 0.0, "label": "normal"},
         "pauses": {"count": 0, "mean_ms": 0, "median_ms": 0, "per_minute": 0.0, "scale": 1.0},
         "breaths": {"count": 0, "positions_s": []},
