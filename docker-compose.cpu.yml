@@ -1,0 +1,30 @@
+# SesKlon — yalnız CPU ile çalıştırma (NVIDIA GPU gerekmez; macOS'taki Docker da CPU'dur).
+#   docker compose -f docker-compose.cpu.yml up -d --build      → http://localhost:8000
+#
+# PyTorch CPU sürümüyle kurulur (CUDA kütüphaneleri inmez, imaj GPU imajından birkaç GB küçüktür).
+# Üretim yavaştır: 10 sn ses ≈ 1–3 dk. Ayarlar docker-compose.yml ile aynıdır (.env okunur); veri birimi de
+# aynıdır, yani GPU ve CPU kurulumları arasında geçişte sesler ve geçmiş korunur.
+services:
+  sesklon:
+    build:
+      context: .
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cpu
+    ports:
+      - "8000:8000"
+    environment:
+      API_KEY: ${API_KEY:-}                  # boş = açık; dışarı açacaksan bir anahtar yaz
+      DEVICE: cpu
+      PRELOAD: ${PRELOAD:-1}                 # 1 = modeli açılışta arka planda yükle
+      T3_MODEL: ${T3_MODEL:-v3}
+      MAX_TEXT_CHARS: ${MAX_TEXT_CHARS:-5000}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-60}
+      MAX_OUTPUTS: ${MAX_OUTPUTS:-500}
+      CHUNK_CHARS: ${CHUNK_CHARS:-170}
+      MAX_REF_SECONDS: ${MAX_REF_SECONDS:-15}
+    volumes:
+      - sesklon-data:/data
+    restart: unless-stopped
+
+volumes:
+  sesklon-data:

@@ -1,0 +1,70 @@
+# SesKlon CI — backend testleri (pytest) ve arayüz derlemesi (vite build).
+# Testler sahte motorla çalışır: Chatterbox ve PyTorch KURULMAZ (requirements.txt'teki chatterbox satırı atlanır),
+# bu yüzden iş birkaç dakikada biter ve GPU gerektirmez.
+name: Testler
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PRELOAD: "0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: ffmpeg kur
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Python bağımlılıkları (Chatterbox/PyTorch hariç)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r <(grep -v chatterbox backend/requirements.txt) -r backend/requirements-dev.txt
+
+      - name: pytest
+        working-directory: backend
+        run: pytest
+
+  frontend:
+    name: Arayüz (vite build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npm run build

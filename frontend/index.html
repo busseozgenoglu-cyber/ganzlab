@@ -2,12 +2,34 @@
 <html lang="tr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SesKlon — Ses Klonlama</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>SesKlon — Türkçe ses klonlama ve doğal seslendirme</title>
+    <meta name="description" content="SesKlon: kendi sunucunuzda çalışan, duygu kontrollü Türkçe ses klonlama ve doğal seslendirme. Birkaç saniyelik bir kayıttan sesinizi klonlayın, metinleri duygu etiketleriyle seslendirin; verileriniz bilgisayarınızdan çıkmaz." />
+    <meta name="application-name" content="SesKlon" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0d0f14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%236d28d9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='30' fill='url(%23g)'/%3E%3Ccircle cx='32' cy='32' r='11' fill='%23ffffff' fill-opacity='.92'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      // Kayıtlı temayı React yüklenmeden uygula (yanıp sönmeyi önler).
+      (function () {
+        try {
+          var t = localStorage.getItem('sesklon_theme');
+          var root = document.documentElement;
+          if (t === 'light' || t === 'dark') root.setAttribute('data-theme', t);
+          var light = t === 'light' || ((!t || t === 'system') && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+          root.style.colorScheme = light ? 'light' : 'dark';
+          var metas = document.querySelectorAll('meta[name="theme-color"]');
+          for (var i = 0; i < metas.length; i++) metas[i].setAttribute('content', light ? '#f6f7fb' : '#0d0f14');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
+    <noscript>SesKlon'u kullanmak için tarayıcınızda JavaScript'i etkinleştirin.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
