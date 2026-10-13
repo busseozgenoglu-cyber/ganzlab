@@ -201,7 +201,7 @@ EN_SPELL_WORDS = {
     "AIDS": "eyds", "HIV": "eyç ay vi", "USA": "yu es ey", "UK": "yu key", "NFT": "en ef ti", "VR": "vi ar",
     "VPN": "vi pi en", "QR": "kü ar", "IP": "ay pi", "UI": "yu ay", "UX": "yu eks", "CRM": "si ar em",
     "ERP": "i ar pi", "MR": "em ar", "B2B": "bi tu bi", "B2C": "bi tu si", "MP3": "em pe üç", "MP4": "em pe dört",
-    "LTE": "el ti i", "4K": "dört ka", "8K": "sekiz ka", "5G": "beş ce", "3D": "üç de", "2D": "iki de",
+    "LTE": "el ti i", "4K": "dört ka", "8K": "sekiz ka", "5G": "beş ge", "4G": "dört ge", "3G": "üç ge", "6G": "altı ge", "3D": "üç de", "2D": "iki de",
     "F1": "formula bir", "BMW": "be me ve", "DNA": "de en a", "WWW": "ve ve ve", "WHO": "dablyu eyç o",
     "NASDAQ": "nasdak", "IBB": "i be be", "IETT": "i e te te",
     # sözcük gibi okunanlar (küçük harfe çevrilir)
@@ -470,7 +470,7 @@ _HARMONY_EXCEPTIONS = {
     "saat": "e", "kalp": "e", "harf": "e", "dikkat": "e",
     "gol": "ö", "rol": "ö", "mol": "ö", "alkol": "ö", "kontrol": "ö", "petrol": "ö", "sembol": "ö", "protokol": "ö",
 }
-_SOFTENING = {"dört": "dörd", "kalp": "kalb"}     # ünlüyle başlayan ekten önce yumuşama: dört+ü → dördü
+_SOFTENING = {"dört": "dörd", "kalp": "kalb", "buçuk": "buçuğ", "çeyrek": "çeyreğ"}   # ünlüyle başlayan ekten önce yumuşama: dört+ü → dördü, buçuk+a → buçuğa
 _RE_BUF_Y = re.compile(r"y[aeıioöuü]")           # kaynaştırma y: -ye, -yı, -yle
 _RE_BUF_N = re.compile(r"n[ıiuü]n")               # ilgi eki -nin
 _RE_BUF_S = re.compile(r"s[ıiuü](?!z)")           # iyelik -si (ama -siz değil)
@@ -1170,7 +1170,11 @@ _RE_ORD_SUFFIX = re.compile(
 #: "Saat 5. Ahmet geldi" (büyük harf) belirsizdir ve cümle sonu sayılır.
 _RE_ORD_DOT = re.compile(
     r"(?<![\w.,])(?P<n>\d+)\.(?=[ \t]+(?:[a-zçğıöşü]"
-    r"|(?:Sok|Sk|Cad|Cd|Mah|Mh|Blv|Bul|Apt|Bl|Kat|Daire|Sokak|Cadde|Mahalle|Bulvar)(?![\w])))"
+    r"|(?:Sok|Sk|Cad|Cd|Mah|Mh|Blv|Bul|Apt|Bl|Kat|Daire|Sokak|Cadde|Mahalle|Bulvar"
+    r"|Dünya|Sınıf|Sezon|Bölüm|Lig|Grup|Tur|Yıl|Hafta|Gün|Ay|Dönem|Ulusal|Uluslararası|Yüzyıl|Kuşak|Nesil|Gezegen"
+    r"|Cumhuriyet|Meşrutiyet|Ordu|Kolordu|Tümen|Alay|Tabur|Bölge|Kademe|Basamak|Aşama|Adım|Seviye|Blok|Çağ|Devre"
+    r"|Fasıl|Perde|Sahne|Cilt|Baskı|Sürüm|Kongre|Olimpiyat|Festival|Şampiyona|Kupa|Sempozyum|Konferans)(?![\w])))"
+    # Kişi adları bilerek yok ("Saat 5. Ahmet geldi." cümle sonu olabilir); hükümdarlar Roma rakamıyla yazılır (II. Mehmet).
 )
 _RE_ROMAN_ORD = re.compile(r"(?<![\w.'])(?P<r>[IVX]{1,7})\.(?=[ \t]+[^\W\d_])")
 _RE_ROMAN_SMALL = re.compile(r"X{0,3}(?:IX|IV|V?I{0,3})")

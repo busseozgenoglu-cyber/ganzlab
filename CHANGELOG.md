@@ -3,6 +3,65 @@
 Bu dosyadaki önemli değişiklikler sürüm sürüm listelenir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/)
 düzenine, sürüm numaraları [Anlamsal Sürümleme](https://semver.org/lang/tr/)'ye uyar.
 
+## 4.0.0 — 2026-10-13
+
+"Diyalog" sürümü: çok konuşmacılı diyalog, kendi kaydınızla gerçek tepkiler ve duygunun şiddetini, karışımını ve
+geçişini yazabildiğiniz etiketler; arkada kalite kontrol, tutarlılık ve altyazı. v3 istekleri değişmeden çalışır
+(yeni alanların hepsi isteğe bağlıdır); varsayılan çıktıda kalite kontrol, tutarlılık ve sohbet kısaltmaları açıktır
+(bkz. [Yükseltme notları](#v3ten-v4e-yükseltme)).
+
+### Eklendi
+
+- **Diyalog sekmesi:** "Ayşe: …" satırları her konuşmacının kendi sesiyle; anlatıcı, doğal sıra alma duraklamaları, sıra sıra dinleme, otomatik ses eşleme ve hazır senaryolar.
+- **Gerçek tepki kayıtları:** gülme, kahkaha, kıkırdama, iç çekme, hmm, of, nefes verme, öksürük, boğaz temizleme, esneme, ağlama, şaşırma, hı hı, mmm ve cık cık için kendi kaydınız; `[gülme]` yazınca model yerine siz gülersiniz, her seferinde hafif farklı.
+- **Duygu yoğunluğu:** `[heyecanlı:1]`…`[heyecanlı:3]`, `[biraz üzgün]`, `[çok kızgın]`, `[aşırı heyecanlı]`, `[şaşkın %120]`.
+- **Duygu karışımı:** `[üzgün+umutlu]` (birincil %70, ikinciller %30).
+- **Duygu geçişi:** `[heyecanlı→sakin]`, `[→sakin]`, `[sakinleşerek]`, `[heyecanlanarak]`, `[yumuşayarak]`, `[sertleşerek]`, `[hüzünlenerek]`, `[neşelenerek]`, `[ciddileşerek]`, `[fısıldayarak]`.
+- **Satır içi kontroller:** `[hız:0.9]` (0,7–1,3), `[perde:+1]` (±4 yarım ton) ve diyalogda `[ses:Ad]`.
+- **Telaffuz sekmesi:** genel ve ses başına telaffuz sözlüğü; "Dene" modelin okuyacağı metni gösterir.
+- **Satır içi okunuş:** `{Claude|Klod}` sözcüğü yalnızca o metinde yazdığınız gibi okutur.
+- **Sohbet kısaltmaları** (varsayılan açık): slm, mrb, nbr, nslsn, tmm, tşk, yrn, grs, knk, inş… açılarak okunur.
+- **Konuşma dolguları** (isteğe bağlı): seyrek "yani", "hani", "işte"; haber, belgesel, sesli kitap, eğitim, müşteri hizmeti ve anlatıcı stillerinde eklenmez.
+- **Kalite kontrol** (varsayılan açık): tekrar, takılma, uzun sessizlik, yarıda kesilme, vızıltı ve kırpılmayı yakalar; farklı tohumla ya da daha kararlı ayarlarla yeniden üretir, parçaya 0–100 puan verir.
+- **Tutarlılık** (varsayılan açık): parçalar arası tını farkını (±3 dB) ve seviye sıçramalarını yumuşatır.
+- **Altyazı:** SRT, VTT, JSON ve LRC; sözcük zamanlı zaman çizelgesi; diyalogda konuşmacı değişimleri ayrı satırda.
+- **Kaydı iyileştir:** gürültü, elektrik uğultusu, tık ve DC kayması temizliği; puan en az 3 artarsa uygulanır, özgün kayıt yedeklenir, geri alınabilir.
+- Seslendir sekmesinde etiket kutusuna **Yoğunluk**, **Geçiş**, **Kontrol** ve seçili sözcük için **Vurgu** / **Okunuş** düğmeleri.
+- Sonuçta kalite kontrol, tutarlılık ve kullanılan tepkiler özeti; "Cümle cümle" listesinde parça başına puan ve neden.
+- API: `/api/voices/{id}/nonverbal`, `/api/voices/{id}/enhance` ve `/enhance/undo`, `/api/lexicon` ve `/api/lexicon/test`, `/api/generations/{id}/subtitles`; `/api/tts`'e `speakers`, `narrator_voice_id`, `speaker_emotions`, `consistency`, `qc`, `fillers`, `chat_speak`, `subtitles`.
+- `GET /api/health`: yeni `features` bayrakları ve `tags.nonverbal_recordable`, `tags.intensity`, `tags.arcs`, `tags.controls`.
+- Ses yedeği (zip) gerçek tepki kayıtlarını da taşır.
+- Belgeler: [Etiketler](docs/ETIKETLER.md), [API](docs/API.md), [SSS](docs/SSS.md) ve [Kayıt rehberi](docs/KAYIT_REHBERI.md) v4 için yenilendi; [v4 modül sözleşmesi](docs/SOZLESME2.md).
+
+### Değişti
+
+- Tek başına `[fısıldayarak]` artık geçiş etiketidir (bölüm boyunca fısıltıya kayar); `[fısıldayarak: …]` eskisi gibi fısıltıdır.
+- `[duygu:1]`…`[duygu:3]` artık yoğunluktur (eskiden "1" metni okunurdu).
+- Sözsüz etiketler metni o noktada böler; kaydı olmayan tepkinin ünlemi önceki cümlenin sonuna eklenir.
+- Varsayılan çıktıda kalite kontrol, tutarlılık, sohbet kısaltmaları ve zaman çizelgesi açıktır; kalite kontrol bozuk parçayı yeniden ürettiği için üretim bazen uzar.
+- Telaffuz sözlüğü yerleşik okunuşlardan önce uygulanır; aynı sözcükte sizin okunuşunuz kazanır. `pronunciations.json` çalışmaya devam eder.
+- Ses silinince ses sözlüğü, iyileştirme yedeği ve tepki kayıtları da silinir.
+- `GET /api/voices` örneklerinde `kind` (`emotion` | `nonverbal`), seste `enhanced` alanı var; diyalog üretiminin geçmişteki ses adı konuşmacı seslerini birleştirir ("Buse + Mehmet").
+
+### Düzeltmeler
+
+- "1,5'a" ve "%1,5'a" → "bir buçuğa" (önce "bir buçuka"); "1/4'e" → "çeyreğe" (önce "çeyreke").
+- "Ne yapacağız?" → "Napıcaz?", "Ne yapacağım?" → "Napıcam?" (önce "Ne yapıcaz?").
+- "5G" → "beş ge" (önce "beş ce"); "3G", "4G" ve "6G" de okunur.
+- "2. Dünya Savaşı" → "ikinci Dünya Savaşı" (önce "iki. Dünya Savaşı"); "3. Sınıf", "2. Lig", "5. Sezon", "1. Bölüm" gibi büyük harfli adlardan önceki sıra sayıları da.
+- Vurgu (`*sözcük*`, `[vurgu]`) artık sese yansır: sözcük ayrı, biraz daha güçlü ve yavaş üretilir (v3'te yalnızca işaret temizleniyordu).
+- Varsayılan ses koruması: ses seçmeden yapılan üretim ve diyalogda sesi seçilmemiş konuşmacı, önceki klonun sesine kaymadan hep modelin varsayılan sesiyle okunur.
+
+### v3'ten v4'e yükseltme
+
+- **Docker:** `git pull && docker compose up -d --build`. Veri birimi korunur; veritabanı şeması değişmedi.
+- **Docker'sız:** `git pull` ardından `./run.sh` ya da `.\run.ps1`; yeni Python bağımlılığı yok.
+- **API istemcileri:** İstekler değişmeden çalışır. v3'e yakın çıktı için `"qc": false, "consistency": false,
+  "chat_speak": false` gönderin (zaman çizelgesi gerekmiyorsa `"subtitles": false`). Metinlerinizde tek başına
+  `[fısıldayarak]` ya da `[duygu:1]`…`[duygu:3]` varsa anlamları değişti (yukarıda).
+- **Sesler:** En çok kullandığınız tepkileri (gülme, kıkırdama, iç çekme, hmm) kaydedin; gürültülü eski kayıtlar için
+  **Kaydı iyileştir**'i deneyin.
+
 ## 3.0.0 — 2026-10-13
 
 "Doğallık" sürümü: Türkçe metin işleme derinleşti; duraklama, nefes, oda tonu ve mastering ile konuşma ritmi

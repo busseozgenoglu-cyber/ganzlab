@@ -8,10 +8,21 @@
 
 Metin tarafı:
 - Duygu etiketi: "[heyecanlı] …" (sonraki etikete kadar) ya da kapsamlı "[heyecanlı: yalnızca bu kısım]".
-- Sözsüz etiketler ([gülme], [iç çekme], [hmm], [tüh]…) akan metne en yakın Türkçe ünlem olarak eklenir.
+- Yoğunluk: "[heyecanlı:1]" (0.7) / ":2" (1.0) / ":3" (1.4), "[biraz üzgün]" (0.65), "[çok kızgın]" (1.35),
+  "[aşırı heyecanlı]" (1.6), "[heyecanlı %150]" (1.5; 50–160 arasına sıkıştırılır) → Segment.intensity.
+- Karışım: "[üzgün+umutlu]" → birincil "üzgün", Segment.blend ["umutlu"] (en çok 2 ikincil).
+- Kayış (arc): "[heyecanlı→sakin]" ya da "[sakinleşerek]" → bölüm boyunca hedef duyguya geçiş (Segment.arc_to).
+- Satır içi kontroller (sürekli): "[hız:0.9]" (Segment.rate), "[perde:+1]" (Segment.pitch), "[ses:Ayşe]"
+  (Segment.speaker); "[hız]" / "[hız:normal]" sıfırlar.
+- Sözsüz etiketler ([gülme], [iç çekme], [hmm], [tüh]…) akan metne en yakın Türkçe ünlem olarak eklenir;
+  keep_nonverbal=True iken kanonik adla (NONVERBAL_CANON) ayrı bir bölüm olur (gerçek tepki kaydı için).
 - Duraklamalar: [nefes], [kısa duraklama], [uzun duraklama], [sessizlik] ve sayılı [1.5 sn] / [500 ms] / [2 saniye].
-- Vurgu: "*sözcük*", "[vurgu] sözcük" ya da "[vurgu: kısa öbek]" → yıldızlar temizlenir, Segment.emphasis_words dolar.
+- Vurgu: "*sözcük*", "[vurgu] sözcük" ya da "[vurgu: kısa öbek]" → yıldızlar temizlenir, Segment.emphasis_words dolar;
+  plan_emphasis() parçayı vurgulu sözcük sınırlarından böler.
 - Cümle içeriğinden otomatik duygu çıkarımı (sözlük + olumsuzluk + noktalama + büyük harf oranı).
+
+Profil tarafı: effective_profile() yoğunluk ve karışımı tek profile indirger, interpolate_profile() kayış için ara
+profil üretir; ikisi de PROFILES'ı değiştirmeden yeni nesne döndürür.
 
 Satır başı "Heyecanlı: …" biçimi bilerek DESTEKLENMEZ (tiyatro/diyalog metinleriyle karışır).
 Tüm küçük harf dönüşümleri `tr_lower` ile yapılır ("İNANILMAZ" → "inanılmaz"; str.lower() İ/ı'yı bozar).
@@ -19,11 +30,12 @@ Tüm küçük harf dönüşümleri `tr_lower` ile yapılır ("İNANILMAZ" → "i
 from __future__ import annotations
 
 import logging
+import math
 import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -270,6 +282,42 @@ NONVERBAL: dict[str, str] = {
     # ses üretmeyenler (süre PAUSE_TAGS'te)
     "nefes": "", "nefes alır": "", "derin nefes": "", "breath": "", "takes a breath": "", "deep breath": "",
     "pause": "", "duraklama": "", "kısa duraklama": "", "uzun duraklama": "", "sessizlik": "", "...": "",
+}
+
+# Sözsüz etiketlerin kanonik Türkçe adları (kanonik ad → eş adları). Gerçek tepki kayıtları (nonverbal.py) bu
+# adlarla saklanır. Kaydedilebilir 15 anahtar ("gülme", "kahkaha", "kıkırdama", "iç çekme", "hmm", "of",
+# "nefes verir", "öksürür", "boğaz temizler", "esner", "ağlar", "şaşırır", "hıh", "mmm", "cık") en yakın eş adları
+# toplar ("chuckles" → "kıkırdama", "vay" → "şaşırır"); karşılığı olmayanlar ("tüh", "aman", "şey"…) kendi adıyla
+# kalır. Her kanonik ad NONVERBAL'da bir anahtardır; okunuşu nonverbal_fallback() ile alınır.
+_NONVERBAL_GROUPS: dict[str, tuple[str, ...]] = {
+    "gülme": ("güler", "gülüyor", "gülüş", "laughs", "laugh", "laughing", "haha", "hahaha"),
+    "kahkaha": ("kahkaha atar", "kahkahalar", "laughs hard"),
+    "kıkırdama": ("kıkırdar", "giggles", "giggle", "hihi", "chuckles", "chuckle", "kıs kıs güler"),
+    "iç çekme": ("iç çeker", "sighs", "sigh"),
+    "nefes verir": ("nefes verme", "exhales"),
+    "of": ("off", "pff", "pf", "pöf", "puflar"),
+    "hmm": ("hm", "düşünür", "thinks"),
+    "mmm": ("mm", "lezzet", "yum"),
+    "hıh": ("hı hı", "hıhı", "ıhı", "onay", "uh huh"),
+    "cık": ("cık cık",),
+    "şaşırır": ("vay canına", "wow", "vay", "gasps", "gasp", "hah", "nefesi kesilir"),
+    "ağlar": ("ağlıyor", "ağlama", "cries", "sobs"),
+    "öksürür": ("öksürük", "coughs", "cough"),
+    "boğaz temizler": ("boğazını temizler", "clears throat", "ehem"),
+    "esner": ("esneme", "yawns"),
+    # kaydedilebilir karşılığı olmayanlar
+    "ıı": ("ee", "dolgu", "um", "uh"),
+    "şey": (),
+    "mırıldanır": ("hums", "hum"),
+    "evet evet": (),
+    "tüh": (), "aman": (), "ay": (), "oh": (), "yok ya": (), "hişt": (), "pişt": (), "hıçkırır": (),
+    "ıslık": ("ıslık çalar", "whistles"),
+    "inler": ("groans", "groan", "inleme"),
+    "burnunu çeker": ("sniffs", "sniff"),
+}
+# eş ad → kanonik ad ("laughs" → "gülme", "kahkaha atar" → "kahkaha", "hıhı" → "hıh"); kanonik ad kendine eşlenir
+NONVERBAL_CANON: dict[str, str] = {
+    alias: canon for canon, aliases in _NONVERBAL_GROUPS.items() for alias in (canon, *aliases)
 }
 
 # Duraklama etiketleri → milisaniye
@@ -746,6 +794,286 @@ class Segment:
     pause_before_ms: int = 0     # bölüm başındaki ek duraklama
     pause_after_ms: int = 0
     emphasis_words: list[str] = field(default_factory=list)   # vurgulanan sözcük/öbekler (metindeki biçimiyle)
+    # keep_nonverbal=True iken sözsüz bölümün kanonik anahtarı ("gülme"); o zaman text "" olur
+    nonverbal: str | None = None
+    intensity: float = 1.0       # duygu yoğunluğu (0.5–1.6); effective_profile'a verilir
+    blend: list[str] = field(default_factory=list)            # ikincil duygular ("[üzgün+umutlu]" → ["umutlu"])
+    rate: float | None = None    # "[hız:0.9]" (0.7–1.3); None = değişiklik yok
+    pitch: float | None = None   # "[perde:+1]" yarım ton (−4…+4); None = değişiklik yok
+    speaker: str | None = None   # "[ses:Ayşe]" — yalnızca ayrıştırılır, ses eşlemesi motorda
+    # "[sakinleşerek]" / "[heyecanlı→sakin]": bölüm boyunca bu duyguya kayış ("normal" da olabilir). Önerilen
+    # kullanım: başlangıç effective_profile(emotion, intensity, blend), bitiş effective_profile(arc_to, intensity),
+    # aradaki cümleler interpolate_profile(başlangıç, bitiş, i / (n - 1)).
+    arc_to: str | None = None
+    nonverbal_reads: str = ""          # keep_nonverbal=True iken ham etiketin kendi okunuşu ("[hı hı]" → "Hı hı.")
+
+
+# ---------- yoğunluk, karışım, kayış ve satır içi kontroller ----------
+
+INTENSITY_MIN, INTENSITY_MAX = 0.5, 1.6
+INTENSITY_LEVELS: dict[int, float] = {1: 0.7, 2: 1.0, 3: 1.4}          # "[heyecanlı:1]" … "[heyecanlı:3]"
+# "[biraz üzgün]", "[çok kızgın]"… (önek sözcükler; ASCII yazım da tanınır: "cok", "asiri")
+INTENSITY_WORDS: dict[str, float] = {
+    "biraz": 0.65, "hafif": 0.65, "az": 0.65, "birazcık": 0.65, "azıcık": 0.65, "hafifçe": 0.65,
+    "slightly": 0.65, "a bit": 0.65,
+    "çok": 1.35, "epey": 1.35, "oldukça": 1.35, "very": 1.35,
+    "aşırı": 1.6, "çok çok": 1.6, "son derece": 1.6, "extremely": 1.6,
+}
+_QUALIFIERS = sorted(INTENSITY_WORDS.items(), key=lambda kv: -len(kv[0]))    # en uzun önce ("çok çok" > "çok")
+MAX_BLEND = 2                     # "[üzgün+umutlu+sakin]" → en çok 2 ikincil
+BLEND_SECONDARY_WEIGHT = 0.3      # ikincillerin toplam payı (birincil %70)
+# Tek sözcüklük kayış etiketleri → hedef duygu (kaynak: o anki duygu)
+ARC_WORDS: dict[str, str] = {
+    "sakinleşerek": "sakin", "heyecanlanarak": "heyecanlı", "yumuşayarak": "samimi", "sertleşerek": "kızgın",
+    "hüzünlenerek": "üzgün", "neşelenerek": "mutlu", "ciddileşerek": "ciddi",
+}
+_ARC_FOLD: dict[str, str] = {fold_ascii(k): v for k, v in ARC_WORDS.items()}
+RATE_MIN, RATE_MAX = 0.7, 1.3     # "[hız:0.9]"; aralık dışı değer yok sayılır
+PITCH_MIN, PITCH_MAX = -4.0, 4.0  # "[perde:+1]" yarım ton; aralık dışı değer yok sayılır
+SPEAKER_NAME_MAX = 40
+# kontrol etiketi adı → Segment alanı (ASCII yazımla eşleşir: "hiz", "konusmaci")
+_CONTROL_LABELS: dict[str, str] = {
+    "hız": "rate", "tempo": "rate", "perde": "pitch", "pitch": "pitch", "ses": "speaker", "konuşmacı": "speaker",
+}
+_CONTROL_FOLD: dict[str, str] = {fold_ascii(k): v for k, v in _CONTROL_LABELS.items()}
+_RESET_WORDS = frozenset({"normal", "varsayilan", "default", "sifirla"})        # ASCII karşılıklarıyla
+_NUM = r"(\d+(?:[.,]\d+)?|[.,]\d+)"
+_RATE_RE = re.compile(r"^[x×]?\s*" + _NUM + r"\s*[x×]?$", re.IGNORECASE)    # "0.9", "0,9", "1.1x"
+_RATE_PCT_RE = re.compile(r"^(?:%\s*" + _NUM + r"|" + _NUM + r"\s*%)$")       # "%90", "90%"
+_PITCH_RE = re.compile(r"^([+\-−–]?)\s*" + _NUM + r"$")                         # "+1", "-2", "−1,5"
+_SPEAKER_RE = re.compile(r"^[\w .'’\-]+$")
+_LEVEL_RE = re.compile(r"^(?P<body>[^:]+?)\s*:\s*(?P<level>[1-3])$")
+_PCT_TAIL_RE = re.compile(r"^(?P<body>[^%:]+?)\s*:?\s*(?:%\s*(?P<a>\d{1,3})|(?P<b>\d{1,3})\s*%)$")
+_PCT_HEAD_RE = re.compile(r"^(?:%\s*(?P<a>\d{1,3})|(?P<b>\d{1,3})\s*%)\s*(?P<body>[^%:]+)$")
+_ARROW_RE = re.compile(r"\s*(?:->|=>|→|⟶|>)\s*")
+_PLUS_RE = re.compile(r"\s*\+\s*")
+
+
+@dataclass
+class _EmotionExpr:
+    """Ayrıştırılmış duygu ifadesi: "[çok üzgün+umutlu]", "[heyecanlı→sakin]", "[sakinleşerek]"…"""
+    emotion: str | None = None         # profil adı ("normal" dahil); keep_current iken kullanılmaz
+    intensity: float | None = None     # None: yazılmadı (yeni duyguda 1.0, kayışta o anki yoğunluk)
+    blend: list[str] = field(default_factory=list)
+    arc_to: str | None = None
+    nonverbal_reads: str = ""          # keep_nonverbal=True iken ham etiketin kendi okunuşu ("[hı hı]" → "Hı hı.")
+    keep_current: bool = False         # kaynak duygu o anki duygudur ("[sakinleşerek]", "[→sakin]")
+
+
+@dataclass
+class _State:
+    """Ayrıştırıcının sürekli ("sticky") durumu: etiketler bir sonraki değişikliğe kadar geçerlidir."""
+    emotion: str | None = None
+    intensity: float = 1.0
+    blend: list[str] = field(default_factory=list)
+    arc_to: str | None = None
+    nonverbal_reads: str = ""          # keep_nonverbal=True iken ham etiketin kendi okunuşu ("[hı hı]" → "Hı hı.")          # bekleyen kayış: bir sonraki metin bölümüne uygulanır
+    rate: float | None = None
+    pitch: float | None = None
+    speaker: str | None = None
+
+    def segment(self, text: str, pause_before_ms: int, words, nonverbal: str | None = None) -> Segment:
+        return Segment(text, self.emotion, pause_before_ms, 0, list(words), nonverbal, self.intensity,
+                       list(self.blend), self.rate, self.pitch, self.speaker, None if nonverbal else self.arc_to)
+
+    def with_emotion(self, name: str) -> "_State":
+        """Düz duygu etiketi: yoğunluk, karışım ve bekleyen kayış sıfırlanır."""
+        return replace(self, emotion=None if name == "normal" else name, intensity=1.0, blend=[], arc_to=None)
+
+    def with_expr(self, e: _EmotionExpr) -> "_State":
+        if e.keep_current:
+            st = replace(self, blend=list(self.blend), arc_to=e.arc_to,
+                         intensity=self.intensity if e.intensity is None else e.intensity)
+        else:
+            st = replace(self, emotion=None if e.emotion == "normal" else e.emotion, blend=list(e.blend),
+                         intensity=1.0 if e.intensity is None else e.intensity, arc_to=e.arc_to)
+        if st.arc_to is not None and st.arc_to == (st.emotion or "normal") and not st.blend:
+            st.arc_to = None                       # aynı duyguya kayış etkisizdir
+        return st
+
+    def settle(self) -> None:
+        """Kayışlı bölüm yazıldıktan sonra ses hedef duyguda kalır (yoğunluk korunur, karışım biter)."""
+        if self.arc_to is not None:
+            self.emotion = None if self.arc_to == "normal" else self.arc_to
+            self.blend = []
+            self.arc_to = None
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return lo if x < lo else hi if x > hi else x
+
+
+def _match_nonverbal(raw: str) -> str | None:
+    """Sözsüz etiketin NONVERBAL'daki anahtarı; _classify_simple ile aynı sırayla arar (birebir, harf tekrarı
+    sadeleştirilmiş, en son ASCII): "HMMM" → "hmm", "gulme" → "gülme", "hahahaha" → "gülme"."""
+    variants = _tag_variants(raw)
+    for k in variants:
+        if k in NONVERBAL:
+            return k
+        if _LAUGH_RE.match(k):
+            return "gülme"
+        if _GIGGLE_RE.match(k):
+            return "kıkırdama"
+    for k in variants:
+        f = fold_ascii(k)
+        if f in _NONVERBAL_FOLD:
+            return _NONVERBAL_FOLD[f]
+        if _LAUGH_RE.match(f):
+            return "gülme"
+        if _GIGGLE_RE.match(f):
+            return "kıkırdama"
+    return None
+
+
+def nonverbal_key(tag: str | None) -> str | None:
+    """Sözsüz etiketi ya da eş adını kanonik Türkçe ada çevirir: "laughs" → "gülme", "Kahkaha atar" → "kahkaha",
+    "hıhı" → "hıh", "SIGHS" → "iç çekme". Ses üretmeyen ([nefes]) ya da sözsüz olmayan etiket → None."""
+    if tag is None or not str(tag).strip():
+        return None
+    k = _match_nonverbal(str(tag).strip())
+    return NONVERBAL_CANON.get(k) if k else None
+
+
+def nonverbal_fallback(key: str) -> str:
+    """Kanonik adın (ya da herhangi bir eş adın) yedek okunuşu — gerçek tepki kaydı yoksa seslendirilecek metin:
+    "gülme" → "Hahaha!", "iç çekme" → "Ahh...". Tanınmayan anahtar → ""."""
+    canon = nonverbal_key(key)
+    return NONVERBAL.get(canon, "") if canon else ""
+
+
+def _arc_target(raw: str) -> str | None:
+    """Tek sözcüklük kayış etiketi ("sakinleşerek", "SAKİNLEŞEREK", "sakinleserek") → hedef duygu."""
+    for k in _key_variants(raw):
+        if k in ARC_WORDS:
+            return ARC_WORDS[k]
+        f = fold_ascii(k)
+        if f in _ARC_FOLD:
+            return _ARC_FOLD[f]
+    return None
+
+
+def _strip_qualifier(s: str) -> tuple[float | None, str]:
+    """Baştaki yoğunluk sözcüğünü ayırır: "çok üzgün" → (1.35, "üzgün"); yoksa (None, s)."""
+    folded = fold_ascii(s)                 # fold_ascii harf sayısını değiştirmez; dilimleme güvenli
+    for word, value in _QUALIFIERS:
+        prefix = fold_ascii(word) + " "
+        if folded.startswith(prefix):
+            return value, s[len(prefix):].strip()
+    return None, s
+
+
+def _resolve_part(part: str) -> str | None:
+    """Karışım/kayış parçası → profil adı; parçadaki yoğunluk sözcüğü yok sayılır ("biraz umutlu" → "umutlu")."""
+    p = part.strip()
+    if not p:
+        return None
+    prof = resolve(p)
+    if prof is None:
+        q, rest = _strip_qualifier(p)
+        if q is not None:
+            prof = resolve(rest)
+    return prof.name if prof is not None else None
+
+
+def _parse_blend(s: str) -> tuple[str, list[str]] | None:
+    """"üzgün+umutlu" → ("üzgün", ["umutlu"]). Bilinmeyen ve yinelenen parçalar atılır; en çok MAX_BLEND ikincil."""
+    names: list[str] = []
+    for part in _PLUS_RE.split(s):
+        n = _resolve_part(part)
+        if n is not None and n not in names:
+            names.append(n)
+    if not names:
+        return None
+    return names[0], names[1:1 + MAX_BLEND]
+
+
+def _parse_emotion_expr(raw: str) -> _EmotionExpr | None:
+    """Yoğunluk / karışım / kayış içeren duygu ifadesi; ifade değilse None.
+
+    "heyecanlı:3", "heyecanlı %150", "%120 heyecanlı", "çok üzgün", "üzgün + umutlu", "heyecanlı→sakin",
+    "heyecanlı -> sakin", "→sakin", "sakinleşerek". Yoğunluk sözcüğü ile sayı birlikte yazılırsa çarpılır.
+    Kayışın bilinmeyen tarafı atılır: kaynak bilinmiyorsa o anki duygudan, hedef bilinmiyorsa kayışsız.
+    "İki nokta" yalnızca seviye son ekinde geçebilir; "[duygu: metin]" kapsamlı etiketiyle karışmaz."""
+    s = _norm_key(raw)
+    if not s:
+        return None
+    level: float | None = None
+    m = _LEVEL_RE.match(s)
+    if m:
+        s, level = m["body"].strip(), INTENSITY_LEVELS[int(m["level"])]
+    else:
+        m = _PCT_TAIL_RE.match(s) or _PCT_HEAD_RE.match(s)
+        if m:
+            pct = int(m["a"] or m["b"])
+            s, level = m["body"].strip(), _clamp(pct / 100.0, INTENSITY_MIN, INTENSITY_MAX)
+    if not s or ":" in s or "%" in s:
+        return None
+    q, s = _strip_qualifier(s)
+    intensity = level
+    if q is not None:
+        intensity = q if level is None else round(_clamp(q * level, INTENSITY_MIN, INTENSITY_MAX), 4)
+    if not s:
+        return None
+    parts = _ARROW_RE.split(s)
+    if len(parts) > 1:
+        src = _parse_blend(parts[0]) if parts[0].strip() else None
+        dst = _resolve_part(parts[-1])
+        if src is None and dst is None:
+            return None
+        if src is None:
+            return _EmotionExpr(intensity=intensity, arc_to=dst, keep_current=True)
+        return _EmotionExpr(src[0], intensity, src[1], dst)
+    arc = _arc_target(s)
+    if arc is not None:
+        return _EmotionExpr(intensity=intensity, arc_to=arc, keep_current=True)
+    src = _parse_blend(s)
+    if src is None:
+        return None
+    return _EmotionExpr(src[0], intensity, src[1])
+
+
+def _parse_rate(value: str) -> float | None:
+    m = _RATE_RE.match(value)
+    if m:
+        r = float(m.group(1).replace(",", "."))
+    else:
+        m = _RATE_PCT_RE.match(value)
+        if not m:
+            return None
+        r = float((m.group(1) or m.group(2)).replace(",", ".")) / 100.0
+    return round(r, 4) if RATE_MIN <= r <= RATE_MAX else None
+
+
+def _parse_pitch(value: str) -> float | None:
+    m = _PITCH_RE.match(value)
+    if not m:
+        return None
+    p = float(m.group(2).replace(",", "."))
+    if m.group(1) and m.group(1) != "+":
+        p = -p
+    return round(p, 4) + 0.0 if PITCH_MIN <= p <= PITCH_MAX else None     # +0.0: "-0" → 0.0
+
+
+def _parse_control(stripped: str) -> tuple[str, object] | None:
+    """"hız:0.9" → ("rate", 0.9), "perde:+1" → ("pitch", 1.0), "ses: Ayşe" → ("speaker", "Ayşe");
+    "hız", "hız:normal", "ses" → (alan, None) yani sıfırla. Ad kontrol etiketi değilse ya da değer geçersiz /
+    aralık dışıysa None (etiket eski kurallarla sınıflanır, sonuçta yok sayılır)."""
+    label, _, value = stripped.partition(":")
+    kind = _CONTROL_FOLD.get(fold_ascii(_norm_key(label)))
+    if kind is None:
+        return None
+    value = value.strip()
+    if kind == "speaker":
+        if not value:
+            return "speaker", None
+        name = re.sub(r"\s+", " ", value)
+        if len(name) <= SPEAKER_NAME_MAX and _SPEAKER_RE.match(name):
+            return "speaker", name                 # ad yazıldığı gibi (büyük/küçük harf korunur)
+        return None
+    if not value or fold_ascii(_norm_key(value)) in _RESET_WORDS:
+        return kind, None
+    num = _parse_rate(value) if kind == "rate" else _parse_pitch(value)
+    return (kind, num) if num is not None else None
 
 
 def _extract_emphasis(text: str) -> tuple[str, list[str]]:
@@ -806,38 +1134,62 @@ def _classify_simple(raw: str) -> tuple[str, object] | None:
 
 
 def _classify_tag(inner: str) -> tuple[str, object]:
-    """Döndürür: (tür, değer). Türler: pause, nonverbal, emphasis, emotion, scoped_emotion, scoped_emphasis,
-    unknown (yok sayılır), text (etiket değil; uzun köşeli parantez metni olduğu gibi kalır)."""
+    """Döndürür: (tür, değer). Türler: pause, nonverbal (değer: okunuş), emphasis, emotion, scoped_emotion,
+    scoped_emphasis, expr (_EmotionExpr: yoğunluk / karışım / kayış), scoped_expr ((_EmotionExpr, metin)),
+    rate / pitch / speaker (değer None = sıfırla), unknown (yok sayılır), text (etiket değil; uzun köşeli parantez
+    metni olduğu gibi kalır). Eski etiketlerin sınıfı değişmez; istisnalar sözleşme gereği: "[fısıldayarak]" artık
+    kayıştır (kapsamlı "[fısıldayarak: …]" eskisi gibi fısıltı) ve "[duygu:1]"…"[duygu:3]" artık yoğunluktur
+    (eskiden "1" metni okunurdu)."""
     stripped = inner.strip()
     if not stripped:
         return "unknown", None
+    control = _parse_control(stripped)
+    if control is not None:
+        return control
     if len(stripped) <= SIMPLE_TAG_MAX:
+        arc = _arc_target(stripped)
+        if arc is not None:
+            return "expr", _EmotionExpr(arc_to=arc, keep_current=True)
         hit = _classify_simple(stripped)
         if hit is not None:
             return hit
+        expr = _parse_emotion_expr(stripped)
+        if expr is not None:
+            return "expr", expr
     label, sep, body = stripped.partition(":")
     if sep and body.strip() and 0 < len(label.strip()) <= _SCOPE_LABEL_MAX:
         if any(k in EMPHASIS_TAGS for k in _key_variants(label)):
             return "scoped_emphasis", body.strip()
         prof = resolve(label)
-        if prof is not None:
+        if prof is not None:            # "[fısıldayarak: …]" eskisi gibi kapsamlı fısıltıdır
             return "scoped_emotion", (prof.name, body.strip())
+        expr = _parse_emotion_expr(label)
+        if expr is not None:
+            return "scoped_expr", (expr, body.strip())
     return ("unknown", None) if len(stripped) <= SIMPLE_TAG_MAX else ("text", None)
 
 
-def parse_tagged_text(text: str) -> list[Segment]:
-    """Metni [duygu]/[duraklama] sınırlarından bölümlere ayırır.
+def parse_tagged_text(text: str, keep_nonverbal: bool = False) -> list[Segment]:
+    """Metni [duygu]/[duraklama]/[kontrol] sınırlarından bölümlere ayırır.
 
     - "[heyecanlı] …" sonraki duygu etiketine kadar geçerlidir; "[heyecanlı: …]" yalnızca parantez içine uygulanır.
-    - Sözsüz etiketler ([gülme] → "Hahaha!") akan metne satır içi eklenir ki model onları cümle bağlamında
-      üretsin (tek başına halüsinasyon yapıyor).
+      Yoğunluk ("[heyecanlı:3]", "[çok üzgün]", "[kızgın %120]"), karışım ("[üzgün+umutlu]") ve kayış
+      ("[heyecanlı→sakin]", "[sakinleşerek]") hem sürekli hem kapsamlı ("[çok heyecanlı: …]") yazılabilir.
+    - Kayış, etiketten sonraki ilk metin bölümüne uygulanır (Segment.arc_to); bölüm bitince ses hedef duyguda kalır
+      (sonraki bölümler emotion=hedef). Tek sözcüklü biçimlerde ve "[→sakin]"de kaynak o anki duygudur.
+    - "[hız:0.9]", "[perde:+1]", "[ses:Ayşe]" yeni bölüm başlatır ve duygudan bağımsız olarak süreklidir;
+      "[hız]" / "[hız:normal]" (perde ve ses için de) sıfırlar. Aralık dışı değer yok sayılır.
+    - Sözsüz etiketler ([gülme] → "Hahaha!") varsayılan olarak akan metne satır içi eklenir ki model onları cümle
+      bağlamında üretsin (tek başına halüsinasyon yapıyor). keep_nonverbal=True iken metne gömülmez: önceki metin
+      kapatılır ve Segment(text="", nonverbal=<kanonik ad>, o anki duygu/konuşmacı…) ayrı bölüm olarak eklenir;
+      motor varsa sesin gerçek tepki kaydını, yoksa nonverbal_fallback(ad) okunuşunu kullanır.
     - Duraklamalar ([nefes], [1.5 sn]…) sonraki bölümün pause_before_ms'ine, metin sonundaysa son bölümün
       pause_after_ms'ine eklenir.
     - "*sözcük*", "[vurgu] sözcük", "[vurgu: öbek]" → yıldızlar silinir, Segment.emphasis_words dolar.
     - Tanınmayan kısa etiket sessizce yok sayılır (ElevenLabs de bilinmeyenleri yok sayar).
     """
     segments: list[Segment] = []
-    emotion: str | None = None
+    st = _State()
     pending_pause = 0
     buf: list[str] = []
     emph: list[str] = []
@@ -857,14 +1209,15 @@ def parse_tagged_text(text: str) -> list[Segment]:
         buf.append(clean)
         emph.extend(found)
 
-    def flush(emo: str | None) -> None:
+    def flush(state: _State) -> None:
+        """Biriken metni state ile bölüm yapar; bekleyen kayış bu bölüme uygulanıp hedef duyguda sabitlenir."""
         nonlocal pending_pause
         t = " ".join(x.strip() for x in buf if x.strip()).strip()
         buf.clear()
         if t:
-            words_ = list(dict.fromkeys(w for w in emph if w))
-            segments.append(Segment(t, emo, pending_pause, 0, words_))
+            segments.append(state.segment(t, pending_pause, dict.fromkeys(w for w in emph if w)))
             pending_pause = 0
+            state.settle()
         emph.clear()
 
     for m in _TAG_RE.finditer(text):
@@ -872,21 +1225,39 @@ def parse_tagged_text(text: str) -> list[Segment]:
         pos = m.end()
         kind, value = _classify_tag(m.group(1))
         if kind == "pause":
-            flush(emotion)
+            flush(st)
             pending_pause += int(value)  # type: ignore[arg-type]
         elif kind == "nonverbal":
-            if value:
+            key = nonverbal_key(m.group(1)) if keep_nonverbal else None
+            if key:
+                flush(st)
+                seg = st.segment("", pending_pause, (), nonverbal=key)
+                seg.nonverbal_reads = str(value or "")          # eş adın kendi okunuşu (kayıt yoksa bu seslendirilir)
+                segments.append(seg)
+                pending_pause = 0
+            elif value:
                 buf.append(str(value))
         elif kind == "emphasis":
             emph_next = True
         elif kind == "emotion":
-            flush(emotion)
-            emotion = None if value == "normal" else str(value)
+            flush(st)
+            st = st.with_emotion(str(value))
+        elif kind == "expr":
+            flush(st)
+            st = st.with_expr(value)  # type: ignore[arg-type]
         elif kind == "scoped_emotion":
             name, body = value  # type: ignore[misc]
-            flush(emotion)
+            flush(st)
             add_text(body)
-            flush(None if name == "normal" else name)
+            flush(st.with_emotion(name))
+        elif kind == "scoped_expr":
+            expr, body = value  # type: ignore[misc]
+            flush(st)
+            add_text(body)
+            flush(st.with_expr(expr))
+        elif kind in ("rate", "pitch", "speaker"):
+            flush(st)
+            setattr(st, kind, value)
         elif kind == "scoped_emphasis":
             clean, found = _extract_emphasis(str(value))
             buf.append(clean)
@@ -895,15 +1266,173 @@ def parse_tagged_text(text: str) -> list[Segment]:
         elif kind == "text":
             buf.append(m.group(0))
     add_text(text[pos:])
-    flush(emotion)
+    flush(st)
     if segments and pending_pause:
         segments[-1].pause_after_ms += pending_pause
     return segments
 
 
+# ---------- etkin profil: yoğunluk, karışım, kayış ----------
+
+EX_RANGE = (0.25, 0.95)           # yoğunlukla ölçeklenen exaggeration sınırları
+CFG_RANGE = (0.3, 0.7)            # yoğunlukla ölçeklenen cfg_weight sınırları
+# Karışımda ve kayışta değeri None olan (istekteki/stildeki değeri kullanan) taraf bu nötr değerle katılır
+_NEUTRAL: dict[str, float] = {"exaggeration": 0.5, "cfg_weight": 0.5, "temperature": 0.8}
+_BLEND_FIELDS = ("exaggeration", "cfg_weight", "temperature", "speed", "pause_mul", "out_gain_db", "ref_pitch",
+                 "ref_tempo", "whisper_mix")
+_INTERP_FIELDS = ("exaggeration", "cfg_weight", "temperature", "ref_pitch", "ref_tempo", "ref_gain_db", "speed",
+                  "out_pitch", "out_gain_db", "whisper_mix", "pause_mul")
+
+
+def _r(x: float | None) -> float | None:
+    """Kayan nokta gürültüsünü temizler (0.7799999999 → 0.78); -0.0 → 0.0."""
+    return None if x is None else round(float(x), 4) + 0.0
+
+
+def _mix(field_name: str, weighted: list[tuple[EmotionProfile, float]]) -> float | None:
+    """Ağırlıklı ortalama. Ağırlığı sıfır olan taraf hesaba girmez; değeri None olan taraf _NEUTRAL değeriyle
+    katılır; ağırlıklı tarafların hepsi None ise sonuç None (motor istekteki/stildeki değeri kullanır)."""
+    vals = [(getattr(p, field_name), w) for p, w in weighted if w > 0]
+    if not vals or all(v is None for v, _ in vals):
+        return None
+    total = sum(w for _, w in vals)
+    return sum((_NEUTRAL[field_name] if v is None else float(v)) * w for v, w in vals) / total
+
+
+def _norm_intensity(intensity) -> float:
+    try:
+        k = float(intensity)
+    except (TypeError, ValueError):
+        return 1.0
+    return _clamp(k, INTENSITY_MIN, INTENSITY_MAX) if math.isfinite(k) else 1.0
+
+
+def effective_profile(name: str | None, intensity: float = 1.0,
+                      blend: list[str] | None = None) -> EmotionProfile | None:
+    """Duygu + yoğunluk + karışımı tek profile indirger. "normal" / None / bilinmeyen ad → None (yoğunluk 1'den
+    farklı ya da karışım verilmiş olsa da). Döndürülen profil YENİ nesnedir (PROFILES değişmez), aliases boştur.
+
+    Karışım (önce): birincil %70, ikinciller (en çok 2) kalan %30'u eşit paylaşır; exaggeration, cfg_weight,
+    temperature, speed, pause_mul, out_gain_db, ref_pitch, ref_tempo, whisper_mix ağırlıklı ortalanır (None değer
+    nötr: ex 0.5, cfg 0.5, temp 0.8), diğer alanlar ve bool alanlar birincilden; name birincilin, label
+    "Üzgün + Umutlu". Bilinmeyen / yinelenen ikinciller atılır.
+    Yoğunluk (sonra; k = intensity, 0.5–1.6'ya sıkıştırılır): ex = 0.5 + (ex − 0.5)·k (0.25–0.95),
+    cfg = 0.5 + (cfg − 0.5)·k (0.3–0.7), speed = 1 + (speed − 1)·k, pause_mul = 1 + (pause_mul − 1)·k,
+    out_gain_db·k. temperature yoğunlukla değişmez (sözleşme: "temp aynı"); None alanlar None kalır.
+    Örnek: heyecanlı (ex 0.7) yoğunluk 1.4 → ex 0.78."""
+    base = resolve(name)
+    if base is None or base.name == "normal":
+        return None
+    k = _norm_intensity(intensity)
+    secondaries: list[EmotionProfile] = []
+    for b in ([blend] if isinstance(blend, str) else (blend or [])):
+        p = resolve(b)
+        if p is None or p.name == base.name or any(p.name == s.name for s in secondaries):
+            continue
+        secondaries.append(p)
+        if len(secondaries) == MAX_BLEND:
+            break
+    if secondaries:
+        share = BLEND_SECONDARY_WEIGHT / len(secondaries)
+        weighted = [(base, 1.0 - BLEND_SECONDARY_WEIGHT)] + [(p, share) for p in secondaries]
+        vals = {f: _mix(f, weighted) for f in _BLEND_FIELDS}
+        label = " + ".join(p.label for p in (base, *secondaries))
+    else:
+        vals = {f: getattr(base, f) for f in _BLEND_FIELDS}
+        label = base.label
+    if vals["exaggeration"] is not None:
+        vals["exaggeration"] = _clamp(0.5 + (vals["exaggeration"] - 0.5) * k, *EX_RANGE)
+    if vals["cfg_weight"] is not None:
+        vals["cfg_weight"] = _clamp(0.5 + (vals["cfg_weight"] - 0.5) * k, *CFG_RANGE)
+    vals["speed"] = 1.0 + (vals["speed"] - 1.0) * k
+    vals["pause_mul"] = 1.0 + (vals["pause_mul"] - 1.0) * k
+    vals["out_gain_db"] = vals["out_gain_db"] * k
+    return replace(base, label=label, aliases=[], **{f: _r(v) for f, v in vals.items()})
+
+
+def interpolate_profile(a: EmotionProfile | None, b: EmotionProfile | None, t: float) -> EmotionProfile:
+    """Kayış (arc) için ara profil: t=0 → a, t=1 → b (t 0–1'e sıkıştırılır). None taraf "normal" profildir.
+    Sayısal alanlar doğrusal (None değer nötr değerle katılır; t uçlarında tarafın kendi değeri, None dahil);
+    highpass_hz tam sayıya yuvarlanır. name, description ve bool alanlar t < 0.5 iken a'nın, aksi halde b'nin;
+    label "Heyecanlı→Sakin". Her zaman YENİ nesne döner; aliases boştur."""
+    pa = a if a is not None else PROFILES["normal"]
+    pb = b if b is not None else PROFILES["normal"]
+    try:
+        tt = float(t)
+    except (TypeError, ValueError):
+        tt = 0.0
+    tt = _clamp(tt, 0.0, 1.0) if math.isfinite(tt) else 0.0
+    weighted = [(pa, 1.0 - tt), (pb, tt)]
+    vals: dict[str, object] = {f: _r(_mix(f, weighted)) for f in _INTERP_FIELDS}
+    vals["highpass_hz"] = int(round(_mix("highpass_hz", weighted) or 0))
+    side = pa if tt < 0.5 else pb
+    return replace(side, label=f"{pa.label}→{pb.label}", aliases=[], **vals)
+
+
+# ---------- vurgu planı ----------
+
+_EMPH_STRIP = "\"'“”‘’«»‹›()[]{}<>.,;:!?…*_~-–—/\\"
+
+
+def _emph_norm(token: str) -> str:
+    """Eşleşme anahtarı: Türkçe küçük harf, kesme işaretleri tekleştirilmiş, baş/son noktalama atılmış."""
+    t = tr_lower(token).replace("i̇", "i").replace("’", "'").replace("‘", "'")
+    return t.strip(_EMPH_STRIP)
+
+
+def _emph_match(token: str, word: str) -> bool:
+    """"önemli." ~ "önemli", "İSTANBUL" ~ "istanbul", "Ankara'ya" / "Ankara’ya" ~ "ankara" (kesmeden sonraki ek)."""
+    if not token:
+        return False
+    if token == word:
+        return True
+    return "'" in token and "'" not in word and token.split("'", 1)[0] == word
+
+
+def plan_emphasis(text: str, words: list[str]) -> list[tuple[str, bool]]:
+    """Metni vurgulu sözcük sınırlarından parçalar: ("Bu çok önemli.", ["çok"]) →
+    [("Bu", False), ("çok", True), ("önemli.", False)].
+
+    - Eşleşme sözcük düzeyindedir (tr_lower; baştaki/sondaki noktalama ve kesmeden sonraki ek yok sayılır);
+      noktalama parçada kalır. Çok sözcüklü öbekler ("hemen şimdi") ardışık sözcüklerle eşleşir.
+    - Ardışık vurgulu sözcükler tek parçadır ("çok önemli"); sözcüğün metindeki her geçişi vurgulanır.
+    - Boş liste ya da hiç eşleşme yoksa [(text, False)] (metin olduğu gibi).
+    - " ".join(parçalar) metni yeniden verir (parça sınırlarındaki boşluk dizileri tek boşluk sayılır; parça
+      içindeki boşluklar ve satır sonları korunur; baştaki/sondaki boşluk atılır)."""
+    phrases: list[list[str]] = []
+    for w in ([words] if isinstance(words, str) else (words or [])):
+        toks = [t for t in (_emph_norm(x) for x in str(w).split()) if t]
+        if toks and toks not in phrases:
+            phrases.append(toks)
+    if not phrases or not text or not text.strip():
+        return [(text, False)]
+    parts = re.split(r"(\s+)", text.strip())
+    tokens, seps = parts[0::2], parts[1::2]
+    norm = [_emph_norm(t) for t in tokens]
+    flags = [False] * len(tokens)
+    for ph in phrases:
+        n = len(ph)
+        for i in range(len(tokens) - n + 1):
+            if all(_emph_match(norm[i + j], ph[j]) for j in range(n)):
+                flags[i:i + n] = [True] * n
+    if not any(flags):
+        return [(text, False)]
+    out: list[tuple[str, bool]] = []
+    cur = tokens[0]
+    for i in range(1, len(tokens)):
+        if flags[i] == flags[i - 1]:
+            cur += seps[i - 1] + tokens[i]
+        else:
+            out.append((cur, flags[i - 1]))
+            cur = tokens[i]
+    out.append((cur, flags[-1]))
+    return out
+
+
 def tag_catalog() -> dict:
     """Arayüz için etiket kataloğu. Eski alanlar ("emotions", "nonverbal": list[str], "pauses": list[str]) aynı
-    biçimde korunur; ayrıntılar "nonverbal_detail" ve "pause_detail" alanlarındadır."""
+    biçimde korunur; ayrıntılar "nonverbal_detail" ve "pause_detail" alanlarındadır. v4 ekleri: "intensity"
+    ([{suffix, label}]; "biraz " / "çok " önek olarak yazılır), "arcs" ([{tag, to}]), "controls" ([{tag, label}])."""
     voiced = sorted(k for k, v in NONVERBAL.items() if v)
     return {
         "emotions": [{"name": p.name, "label": p.label, "aliases": list(p.aliases), "description": p.description}
@@ -915,4 +1444,10 @@ def tag_catalog() -> dict:
         "timed_pause_examples": ["[500 ms]", "[1 sn]", "[1.5 sn]", "[2 saniye]"],
         "emphasis_examples": ["*çok* önemli", "[vurgu] yarın", "[vurgu: hemen şimdi]"],
         "scoped_example": "[heyecanlı: Yalnızca bu cümle heyecanlı.]",
+        "intensity": [{"suffix": ":1", "label": "hafif"}, {"suffix": ":2", "label": "normal"},
+                      {"suffix": ":3", "label": "güçlü"}, {"suffix": "biraz ", "label": "biraz"},
+                      {"suffix": "çok ", "label": "çok"}],
+        "arcs": [{"tag": tag, "to": to} for tag, to in ARC_WORDS.items()],
+        "controls": [{"tag": "hız:0.9", "label": "Hız"}, {"tag": "perde:+1", "label": "Perde"},
+                     {"tag": "ses:Ad", "label": "Konuşmacı"}],
     }

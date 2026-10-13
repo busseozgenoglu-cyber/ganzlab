@@ -5,7 +5,7 @@ import { api } from '../api'
  * Referans kaydı analiz kartı — şema: docs/SOZLESME.md §4.
  *   <AnalysisCard analysis={a} compact={bool} loading={bool} onAnalyze={fn} title="…" />
  * compact: yalnızca puan halkası + derece + ilk 2 sorun. analysis null → "Analiz yok" (+ onAnalyze varsa düğme).
- * Ayrıca: QualityBadge (★ 84), useFileAnalysis (dosya seçilince otomatik analiz) ve Türkçe biçimlendiriciler.
+ * Ayrıca: QualityBadge (★ 84), ScoreRing, useFileAnalysis (dosya seçilince otomatik analiz) ve Türkçe biçimlendiriciler.
  */
 
 /* ---------- biçimlendirme ---------- */
@@ -125,7 +125,8 @@ export function useFileAnalysis({ enabled = true, notify } = {}) {
 
 /* ---------- alt bileşenler ---------- */
 
-function ScoreRing({ score, color, size = 64, stroke = 6 }) {
+/** Puan halkası (SVG). Voices "Kaydı iyileştir" önce/sonra karşılaştırmasında da kullanılır. */
+export function ScoreRing({ score, color, size = 64, stroke = 6 }) {
   const pct = Math.max(0, Math.min(100, Number(score) || 0))
   const c = size / 2
   const r = (size - stroke) / 2

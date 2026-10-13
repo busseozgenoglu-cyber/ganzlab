@@ -1,5 +1,5 @@
 // SesKlon API istemcisi. Tüm uç noktalar burada; hata mesajları Türkçedir.
-// Sözleşme: docs/SOZLESME.md bölüm 7–8.
+// Sözleşme: docs/SOZLESME.md bölüm 7–8, docs/SOZLESME2.md bölüm 9–10 (diyalog, altyazı, telaffuz, tepki, iyileştirme).
 
 const KEY_STORAGE = 'sesklon_api_key'
 
@@ -81,6 +81,11 @@ const FIELD_TR = {
   colloquial: 'Konuşma dili', notes: 'Notlar', default_style: 'Varsayılan stil', consent: 'İzin onayı',
   limit: 'Sayfa boyutu', offset: 'Başlangıç', favorite: 'Favori', emotion_fx: 'Ses işleme', kind: 'Tür',
   breaths: 'Nefes', room_tone: 'Oda tonu', master: 'Mastering', q: 'Arama',
+  // v4
+  speakers: 'Konuşmacılar', narrator_voice_id: 'Anlatıcı sesi', consistency: 'Tutarlılık', qc: 'Kalite kontrol',
+  fillers: 'Dolgu sözcükleri', chat_speak: 'Sohbet kısaltmaları', subtitles: 'Altyazı', word: 'Sözcük',
+  reading: 'Okunuş', tag: 'Tepki', force: 'Zorla', punctuation_emotion: 'Noktalamaya göre duygu',
+  auto_emotion: 'Otomatik duygu',
 }
 
 function validationMessage(items) {
@@ -261,6 +266,49 @@ function extForType(type) {
   return '.zip'
 }
 
+function audioExt(type) {
+  const t = String(type || '').toLowerCase()
+  if (t.includes('ogg')) return '.ogg'
+  if (t.includes('wav')) return '.wav'
+  if (t.includes('mpeg') || t.includes('mp3')) return '.mp3'
+  if (t.includes('mp4') || t.includes('m4a') || t.includes('aac')) return '.m4a'
+  return '.webm'
+}
+
+/** Dosya alanı ekler; adı olmayan Blob'a (mikrofon kaydı) türüne uygun bir ad verir. */
+function appendFile(fd, field, file, base = 'kayit') {
+  if (typeof Blob !== 'undefined' && file instanceof Blob && !file.name) fd.append(field, file, `${base}${audioExt(file.type)}`)
+  else fd.append(field, file)
+}
+
+const SUBTITLE_FORMATS = ['srt', 'vtt', 'json']
+const subtitleFormat = (f) => {
+  const s = String(f || 'srt').trim().toLowerCase()
+  return SUBTITLE_FORMATS.includes(s) ? s : 'srt'
+}
+
+/** Sunucu 404'e kendi açıklamasını yazmadıysa (ör. "Not Found") genel mesaj yerine bağlama uygun mesaj verilir. */
+function isGenericNotFound(data) {
+  const d = data && typeof data === 'object' ? data.detail : data
+  if (d == null || d === '') return true
+  return typeof d === 'string' && /^not\s*found\.?$/i.test(d.trim())
+}
+
+/** GET …/subtitles?format= — 404'ü "bu üretimin altyazısı yok" olarak açıklar. */
+async function fetchSubtitles(genId, format) {
+  const fmt = subtitleFormat(format)
+  try {
+    return { res: await send(`/api/generations/${enc(genId)}/subtitles?format=${fmt}`), fmt }
+  } catch (err) {
+    if (err?.status === 404 && isGenericNotFound(err.data)) {
+      throw new ApiError('Bu üretimin altyazısı yok. Altyazı, "Altyazı üret" açıkken üretilen seslerde bulunur.', {
+        status: 404, data: err.data, path: err.path,
+      })
+    }
+    throw err
+  }
+}
+
 /** Blob'u tarayıcıda dosya olarak indirir. */
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
@@ -334,6 +382,11 @@ export const api = {
   },
 
   // üretim
+  /**
+   * POST /api/tts — payload olduğu gibi gönderilir. v4 alanları: speakers ({Ad: voice_id | null}; metin diyalogsa
+   * diyalog modu), narrator_voice_id, consistency, qc, fillers, chat_speak, subtitles. Sonuç: üretim nesnesi
+   * (params.turns, params.qc, params.timeline, params.consistency, params.nonverbal_used).
+   */
   tts: async (payload, onProgress) => {
     const job = await request('/api/tts', { method: 'POST', json: payload })
     return waitJob(job, onProgress)
@@ -379,4 +432,51 @@ export const api = {
   },
   favorite: (id, on) => request(`/api/generations/${enc(id)}/favorite`, { method: 'POST', json: { favorite: !!on } }),
   deleteGeneration: (id) => request(`/api/generations/${enc(id)}`, { method: 'DELETE' }),
+
+  // altyazı (üretimin zaman çizelgesinden; SOZLESME2 §9)
+  /** Altyazıyı dosya olarak indirir (format: "srt" | "vtt" | "json"); ad Content-Disposition'dan. */
+  subtitles: async (genId, format = 'srt') => {
+    const { res, fmt } = await fetchSubtitles(genId, format)
+    const blob = await res.blob()
+    const name = filenameFromDisposition(res.headers.get('content-disposition')) || `sesklon-${genId}.${fmt}`
+    downloadBlob(blob, name)
+  },
+  /** Altyazının metni (önizleme için). */
+  subtitleText: async (genId, format = 'srt') => {
+    const { res } = await fetchSubtitles(genId, format)
+    return res.text()
+  },
+
+  // telaffuz sözlüğü
+  /** GET /api/lexicon[?voice_id=] — girdiler: [{word, reading, scope: "global" | "voice"}] (sunucu yanıtı olduğu gibi). */
+  lexicon: (voiceId) => request(`/api/lexicon${voiceId ? `?voice_id=${enc(voiceId)}` : ''}`),
+  /** PUT /api/lexicon — voiceId verilirse yalnızca o sese özel girdi. */
+  setLexicon: (word, reading, voiceId) => request('/api/lexicon', {
+    method: 'PUT', json: { word, reading, ...(voiceId ? { voice_id: voiceId } : {}) },
+  }),
+  deleteLexicon: (word, voiceId) => {
+    const p = new URLSearchParams({ word: String(word ?? '') })
+    if (voiceId) p.set('voice_id', voiceId)
+    return request(`/api/lexicon?${p}`, { method: 'DELETE' })
+  },
+  /** POST /api/lexicon/test → {normalized, changes: [...]} */
+  testLexicon: (text, voiceId, language) => request('/api/lexicon/test', {
+    method: 'POST', json: { text, ...(voiceId ? { voice_id: voiceId } : {}), ...(language ? { language } : {}) },
+  }),
+
+  // gerçek tepki kayıtları (gülme, iç çekme…)
+  addNonverbal: (voiceId, tag, file) => {
+    const fd = new FormData()
+    fd.append('tag', tag)
+    appendFile(fd, 'file', file, 'tepki')
+    return request(`/api/voices/${enc(voiceId)}/nonverbal`, { method: 'POST', body: fd })
+  },
+  deleteNonverbal: (voiceId, tag) => request(`/api/voices/${enc(voiceId)}/nonverbal/${enc(tag)}`, { method: 'DELETE' }),
+
+  // referans kaydı iyileştirme
+  /** POST …/enhance → {before, after, report, applied}; force=true puan artmasa da uygular. */
+  enhanceVoice: (voiceId, force = false) => request(`/api/voices/${enc(voiceId)}/enhance`, {
+    method: 'POST', body: formData({ force: !!force }),
+  }),
+  undoEnhance: (voiceId) => request(`/api/voices/${enc(voiceId)}/enhance/undo`, { method: 'POST' }),
 }

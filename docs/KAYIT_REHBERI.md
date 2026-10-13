@@ -1,9 +1,12 @@
-# Referans kaydı rehberi
+# Kayıt rehberi: referans, duygu ve gerçek tepkiler
 
 SesKlon bir sesi tek bir kısa kayıttan klonlar. Model kaydı "düzeltmez", taklit eder: ses rengi, tempo, enerji,
 duraklama alışkanlığı, hatta odanın yankısı ve uğultusu klona geçer. SesKlon ayrıca kaydınızdaki **oda tonunu**
 (konuşma aralarındaki ortam sesi) duraklamaları doldurmak için, **nefeslerinizi** de cümle aralarında kullanır. Bu yüzden
 sonucu en çok etkileyen şey, 10–15 saniyelik bu kayıttır.
+
+Bu rehber üç tür kaydı anlatır: **temel (referans) kayıt** (bölüm 1–6), **duygu kayıtları** (bölüm 7) ve `[gülme]`
+gibi etiketlerde modelin yerine çalınan **gerçek tepki kayıtları** (bölüm 8).
 
 ## Kısa kontrol listesi
 
@@ -14,6 +17,7 @@ sonucu en çok etkileyen şey, 10–15 saniyelik bu kayıttır.
 - [ ] Videoda ya da yayında nasıl konuşacaksanız o enerjiyle, "okur gibi" değil "anlatır gibi"
 - [ ] WAV ya da kayıpsız kayıt; WhatsApp sesli mesajı ya da telefon görüşmesi kaydı değil
 - [ ] Analiz puanı en az 70 ("iyi"); 85 ve üstü ideal
+- [ ] Duygu ve tepki kayıtları temel kayıtla aynı oda, aynı mikrofon, aynı mesafe
 
 ## 1. Ortam
 
@@ -42,8 +46,8 @@ Telefonla da iyi kayıt alınır; dikkat edilecekler:
 
 - **Uygulama:** iPhone'da *Sesli Notlar* (Ayarlar → (Uygulamalar →) Sesli Notlar → Ses Kalitesi: **Kayıpsız**). Android'de
   yerleşik *Ses Kaydedici*; ayarlarda en yüksek kalite ya da WAV seçeneği varsa onu seçin.
-- **Filtre kullanmayın:** "Kaydı iyileştir", "gürültü azaltma", "ses izolasyonu" gibi seçenekler sese metalik, su altı
-  gibi izler bırakır ve bu izler klona geçer.
+- **Filtre kullanmayın:** Telefonun "Kaydı iyileştir", "gürültü azaltma", "ses izolasyonu" gibi seçenekleri sese metalik,
+  su altı gibi izler bırakır ve bu izler klona geçer. Gerekirse SesKlon'un ölçülü iyileştirmesini kullanın (bölüm 10).
 - **Tutuş:** Telefonun alt kenarındaki mikrofon size dönük, ağzınızdan 20–30 cm uzakta olsun. Telefonu bir kitabın
   üstüne koymak elde tutmaktan iyidir.
 - **Uçak modu:** Bildirim sesleri ve şebeke paraziti kaydı bozar.
@@ -70,8 +74,8 @@ Telefonla da iyi kayıt alınır; dikkat edilecekler:
   konuşacaksanız (sakin bir anlatım mı, enerjik bir tanıtım mı) öyle kaydedin.
 - **Okumayın, anlatın.** Metni iki üç kez okuyup sonra birine anlatır gibi söyleyin. Gülümseyerek konuşmak sese
   duyulur ve çoğu içerikte iyi sonuç verir.
-- **Temel (nötr) kayıtta** fısıldamayın, bağırmayın, ses taklidi yapmayın. Duygular için ayrı duygu kayıtları
-  ekleyin (bölüm 7).
+- **Temel (nötr) kayıtta** fısıldamayın, bağırmayın, ses taklidi yapmayın, gülmeyin. Duygular için duygu kayıtları
+  (bölüm 7), gülme ve iç çekme gibi sesler için tepki kayıtları (bölüm 8) ekleyin.
 - **Ritminiz kopyalanır:** SesKlon kayıttaki ortalama duraklama sürenizi ölçer (`pauses.scale`) ve üretimdeki cümle
   arası duraklamaları buna göre ayarlar. Cümle aralarında doğal nefes alın; nefesleri bastırmaya ya da sonradan
   silmeye çalışmayın.
@@ -108,9 +112,12 @@ kullanılır ve duygu yalnızca üretim ayarlarıyla (vurgu, tempo, duraklama) v
 
 - **Nerede:** Sesler sekmesi → ses kartı → **Duygu kayıtları**. Her duygu için hazır bir okuma metni gösterilir.
 - **Aynı koşullar:** Temel kayıtla aynı oda, aynı mikrofon, aynı mesafe. Koşullar değişirse duygular arasında ses
-  rengi de değişir.
+  rengi de değişir (Tutarlılık katmanı bunu ±3 dB'ye kadar törpüler, tamamen silmez).
 - **Süre:** 8–12 sn. Duyguyu bütün sesinizle verin ama karikatürleştirmeyin; doğal bir oyunculuk en iyi sonucu verir.
 - **Hepsi şart değil:** Önce en çok kullanacağınız 3–4 duyguyu kaydedin.
+- **Yoğunluk, karışım ve geçiş** aynı kaydı kullanır: `[çok üzgün]` üzgün kaydını, `[üzgün+umutlu]` birincil
+  duygunun (üzgün) kaydını, `[heyecanlı→sakin]` bölüm boyunca başlangıç duygusunun kaydını referans alır; şiddet
+  üretim ayarlarıyla verilir ([Etiketler](ETIKETLER.md#3-duygu-yoğunluğu)).
 - `[normal]` temel kaydınızdır; `[hızlı]` ve `[yavaş]` tempo etiketleridir, kayıt almazlar.
 
 | Duygu | Nasıl okunur |
@@ -137,7 +144,57 @@ kullanılır ve duygu yalnızca üretim ayarlarıyla (vurgu, tempo, duraklama) v
 | çocuksu | Perdeyi biraz yükseltip oyunbaz ve meraklı okuyun; sesi zorlayıp çizgi film karakterine dönüştürmeyin. |
 | otoriter | Kısa, net ve kesin konuşun; cümle sonlarında sesi düşürün, soru tonuna kaçmayın. |
 
-## 8. Analiz puanı nasıl yorumlanır
+## 8. Gerçek tepki kayıtları
+
+Model gülme, iç çekme, öksürme gibi sesleri gerçekten üretemez; kaydı olmayan `[gülme]` "Hahaha!" diye okunur ve yapay
+duyulur. Kendi gülmenizi bir kez kaydederseniz o sesle yazdığınız her `[gülme]` etiketinde **sizin gülmeniz** çalınır.
+SesKlon'u en çok "insan gibi" yapan adımlardan biridir.
+
+**Nasıl eklenir:** Sesler sekmesi → ses kartı → **Gerçek tepkiler** → tepkiyi seçin → gösterilen yönergeyi okuyun →
+**● Kaydet** (mikrofon, en fazla 5 sn) ya da "…ya da dosya" → **Ekle**. Kaydı yenilemek için aynı tepkiyi seçip yeniden
+ekleyin; eskisinin yerine geçer. API: `POST /api/voices/{id}/nonverbal` ([API](API.md#gerçek-tepki-kayıtları)).
+
+**Kayda ne olur:** baş ve sondaki sessizlik kırpılır; 3 sn'den uzunsa en enerjik 3 sn alınır; seviye dengelenir
+(−22 dBFS). 0,15 sn'den kısa ya da sessiz kayıt kabul edilmez. Üretimde tepki önceki konuşmanın yaklaşık 4 dB altına
+oturtulur ve her kullanımda biraz farklı çalınır (seviye ±1,5 dB; ffmpeg varsa tempo ±%3, perde ±0,3 yarım ton): aynı
+gülme iki kez birebir aynı duyulmaz.
+
+**Kurallar**
+
+- **Aynı koşullar:** temel kayıtla aynı oda, mikrofon ve mesafe; yoksa tepki konuşmadan "ayrı" duyulur.
+- **Yalnızca tepki:** gülerken ya da iç çekerken söz söylemeyin; önünde ve arkasında uzun sessizlik bırakmayın.
+- **Kısa ve doğal:** 1–3 sn yeterli. Abartılı, "sahne" gülmesi metinde de abartılı duyulur.
+- **Kırpılmasın:** kahkaha ve öksürük gibi gür seslerde mikrofondan bir karış uzaklaşın ya da hafifçe yana dönün.
+- **Kendi sesiniz:** dizi ya da videodan kesilmiş başkasının gülmesini eklemeyin; ses rengi sizinkiyle uyuşmaz ve
+  izin gerektirir.
+- **Öncelik:** önce en sık kullandıklarınız — gülme, kıkırdama, iç çekme, hmm. Kalanlar zamanla.
+
+**Tepkiler ve yönergeler** (kayıt ekranında da aynı yönerge görünür; metindeki eş adlar için:
+[Etiketler → Sözsüz tepkiler](ETIKETLER.md#9-sözsüz-tepkiler))
+
+| Tepki | Metinde | Nasıl kaydedilir |
+|---|---|---|
+| Gülme | `[gülme]` | Komik bir şey hatırla ve içten, doğal bir kahkaha at — 1–3 saniye. Zorlama; kısa bir 'hahaha' bile olur. |
+| Kahkaha | `[kahkaha]` | Seni gerçekten güldüren bir anı düşün ve kendini bırak: gür, dolu bir kahkaha — 2–3 saniye. Ses patlamasın diye mikrofondan bir karış uzaklaş. |
+| Kıkırdama | `[kıkırdama]` | Gülmemeye çalışırken kaçıveren kısa, kısık bir kıkırdama — 'hihi' ya da 'kıkır kıkır', 1–2 saniye. Ağzın yarı kapalı olabilir. |
+| İç çekme | `[iç çekme]` | Yorucu bir günün sonunda koltuğa yeni oturmuşsun gibi derin bir nefes al ve 'ahh' diye yavaşça bırak — 1–2 saniye. Abartma, hafif olsun. |
+| Hmm | `[hmm]` | Bir soruyu tartıyormuşsun gibi ağzın kapalı, düşünceli bir 'hmm' — 1 saniye kadar. Sonu nasıl gelirse öyle bırak. |
+| Of | `[of]` | Canını sıkan küçük bir şeye tepki verir gibi 'offf' de — bıkkın ama sevimli, 1 saniye kadar. |
+| Nefes verme | `[nefes verir]` | Rahatlamışsın gibi ağzından sesli bir nefes ver — 'hoff', yarım ile 1,5 saniye arası. |
+| Öksürük | `[öksürür]` | Boğazına bir şey kaçmış gibi bir iki kez doğal öksür — 1 saniye kadar. Mikrofona doğrudan değil, hafif yana dönerek. |
+| Boğaz temizleme | `[boğaz temizler]` | Söze girmeden önceki gibi kısa bir 'ehem' ile boğazını temizle — yarım ile 1 saniye arası. |
+| Esneme | `[esner]` | Uykun gelmiş gibi doğal bir esneme — 'aaah', 1–2 saniye. Rahat bırak, sonu kendiliğinden sönsün. |
+| Ağlama | `[ağlar]` | Duygulandığın bir anı düşün: kısa, burnunu çeken hafif bir ağlama ya da birkaç kesik hıçkırık — 1–3 saniye. Kendini zorlama. |
+| Şaşırma | `[şaşırır]` | Hiç beklemediğin bir haber almışsın gibi içten şaşır: kısa bir 'Aa!' ya da 'Vay!' — 1 saniye kadar. |
+| Hı hı (onay) | `[hıh]` | Karşındakini dinlerken onaylar gibi ağzın kapalı, kısa bir 'hı hı' — yarım ile 1 saniye arası. |
+| Mmm | `[mmm]` | Çok sevdiğin bir tadı alıyormuşsun gibi ağzın kapalı, keyifli bir 'mmm' — 1 saniye kadar. |
+| Cık cık | `[cık]` | 'Olmaz' der gibi dilini damağına vurarak iki kez 'cık cık' yap — yarım saniye kadar. |
+
+- `[tüh]`, `[aman]`, `[şey]`, `[ıslık]`, `[hıçkırır]` gibi tepkiler kaydedilemez; her zaman okunur.
+- Hangi tepkilerin gerçek kayıttan çalındığı üretim sonucunda "Kullanılan tepkiler" satırında görünür.
+- Tepki kayıtları sesin yedek zip'ine dahildir; diyalogda her konuşmacı kendi tepki kayıtlarını kullanır.
+
+## 9. Analiz puanı nasıl yorumlanır
 
 Kayıt seçildiği anda kaydedilmeden incelenir (`POST /api/analyze`); ses kaydedilince analiz sesle birlikte saklanır ve
 ses kartındaki **Analiz** düğmesiyle yeniden görülebilir (`GET /api/voices/{id}/analysis`). Duygu kayıtları da analiz edilir.
@@ -148,7 +205,7 @@ ses kartındaki **Analiz** düğmesiyle yeniden görülebilir (`GET /api/voices/
 |---|---|---|
 | 85–100 | mükemmel | Olduğu gibi kullanın. |
 | 70–84 | iyi | Kullanılabilir; uyarıları düzeltmek benzerliği artırır. |
-| 50–69 | orta | Çalışır ama gürültü, yankı ya da boğukluk klona geçebilir; önerilere göre yeniden kaydedin. |
+| 50–69 | orta | Çalışır ama gürültü, yankı ya da boğukluk klona geçebilir; önerilere göre yeniden kaydedin ya da **Kaydı iyileştir**'i deneyin (bölüm 10). |
 | 0–49 | zayıf | Yeniden kaydedin. |
 
 Her sorunun bir önemi vardır: **error** (hata — mutlaka düzeltin), **warn** (uyarı — düzeltmeniz önerilir),
@@ -178,7 +235,7 @@ Her sorunun bir önemi vardır: **error** (hata — mutlaka düzeltin), **warn**
 | `too_short` | 7 sn'den kısa (4 sn altı hata) | 10–20 sn akıcı konuşun; soru, ünlem ve düz cümle içeren bir metin okuyun. |
 | `too_long` | 25 sn'den uzun (bilgi) | Sorun değil, en dolu bölüm seçilir; isterseniz en temiz 10–20 sn'yi kendiniz kesin. |
 | `low_speech_ratio` | Kaydın %60'ından azı konuşma (%40 altı uyarı; hiç konuşma yoksa hata) | Baştaki, sondaki ve aradaki uzun boşlukları kesin; doğru mikrofonun seçildiğini kontrol edin. |
-| `noisy` | Sinyal/gürültü 30 dB'nin altında (20 dB altı uyarı) | Klima, fan, buzdolabını kapatın; pencere ve kapıyı kapatın; mikrofona 20–30 cm yaklaşın. |
+| `noisy` | Sinyal/gürültü 30 dB'nin altında (20 dB altı uyarı) | Klima, fan, buzdolabını kapatın; pencere ve kapıyı kapatın; mikrofona 20–30 cm yaklaşın. Yeniden kaydedemiyorsanız **Kaydı iyileştir**. |
 | `clipping` | Örneklerin %0,01'inden fazlası tavanda ya da düz tepeler var (%0,1 üstü hata) | Kazancı düşürün ya da biraz uzaklaşın; tepeler −6 dBFS civarında kalsın ve yeniden kaydedin. |
 | `too_loud` | Tepe −0,5 dBFS'in üstünde (bilgi) | Kazancı biraz düşürün. |
 | `too_quiet` | Ortalama seviye −32 dBFS'in altında | Mikrofona yaklaşın ya da kazancı artırın; ortalama −24…−16 dBFS olsun. |
@@ -187,13 +244,30 @@ Her sorunun bir önemi vardır: **error** (hata — mutlaka düzeltin), **warn**
 | `monotone` | Perde aralığı 4 yarım tondan dar (bilgi) | Anlatır gibi okuyun; vurgulu sözcüklerde ses doğal olarak yükselip alçalsın. |
 | `too_fast` | Saniyede ~5,8 heceden hızlı (bilgi) | Biraz yavaşlayın, cümle aralarında nefes alın; klon bu ritmi taklit eder. |
 | `too_slow` | Saniyede ~3,8 heceden yavaş (bilgi) | Sohbet temponuzda, cümle bütünlüğüyle okuyun. |
-| `dc_offset` | Sinyalde sabit kayma (tepenin %2'sinden fazla; bilgi) | Başka bir mikrofon girişi, kablo ya da kayıt uygulaması deneyin. |
+| `dc_offset` | Sinyalde sabit kayma (tepenin %2'sinden fazla; bilgi) | Başka bir mikrofon girişi, kablo ya da kayıt uygulaması deneyin; **Kaydı iyileştir** kaymayı giderir. |
 
 **Analiz üretimi nasıl etkiler:** `pauses.scale` sesin duraklama çarpanı olarak saklanır ve istekteki `pause_scale` ile
 çarpılır. Kaydın en sessiz bölümü oda tonu, bulunan nefes de cümle arası nefes olarak kullanılır; kayıtta sessiz bölüm
 ya da nefes yoksa bunların sentetik karşılıkları devreye girer.
 
-## 9. Sık hatalar
+## 10. Kaydı iyileştirme
+
+Yeniden kayıt alamıyorsanız ses kartındaki **✨ Kaydı iyileştir** temel kaydı ölçülü biçimde temizler. Analiz gürültü,
+kısık seviye, DC kayması ya da orta/zayıf puan gösteriyorsa düğme öne çıkar; elektrik uğultusu duyuyorsanız puan iyi
+olsa da deneyin (uğultuyu analiz değil iyileştirme ölçer).
+
+- **Yaptıkları:** DC kaymasını giderir, tıkları temizler, şebeke uğultusunu (50/60 Hz ve iki harmoniği) süzer, arka
+  plan gürültüsünü azaltır (konuşmanın harmoniklerine dokunmadan, en çok 12 dB — daha fazlası yapay iz bırakır),
+  70 Hz altındaki gümbürtüyü keser ve seviyeyi dengeler.
+- **Karar:** Temizlenen kayıt yeniden analiz edilir; puan **en az 3** artarsa uygulanır. Artmazsa kayıt değişmez;
+  önce/sonra puanını görüp **Yine de uygula** diyebilirsiniz.
+- **Geri alma:** Özgün kayıt yedekte durur; **↺ Geri al** (ya da **İyileştirmeyi geri al**) onu geri yükler.
+- **Düzeltmedikleri:** yankı, kırpılma, dar bant (telefon görüşmesi, WhatsApp), arka plandaki müzik ya da ikinci
+  konuşmacı. Bunlar için yeniden kaydedin.
+- Yalnızca temel kayda uygulanır; duygu ve tepki kayıtlarını temiz ortamda alın. Uyguladıktan sonra bir cümle üretip
+  dinleyin; ses metalikleştiyse geri alın.
+
+## 11. Sık hatalar
 
 - WhatsApp sesli mesajı ya da telefon görüşmesi kaydı yüklemek: dar bant, boğuk klon.
 - Telefonun "kaydı iyileştir" / gürültü azaltma filtresini açık bırakmak: metalik, yapay iz.
@@ -202,8 +276,9 @@ ya da nefes yoksa bunların sentetik karşılıkları devreye girer.
 - "Okuma sesi" ile monoton okumak: klon da monoton olur.
 - Mikrofona çok yakından ya da bağırarak kaydetmek: kırpılma sonradan düzeltilemez.
 - Kaydın başında ve sonunda klavye, fare ya da masa sesleri.
-- Duygu kayıtlarını farklı odalarda ya da farklı mikrofonla almak: duygular arasında ses rengi değişir.
+- Duygu ve tepki kayıtlarını farklı odalarda ya da farklı mikrofonla almak: ses rengi değişir, tepki konuşmadan ayrı duyulur.
+- Tepki kaydına konuşma karıştırmak ("hahaha, çok komik"): kayıt her `[gülme]`de aynen çalınır.
 - Kaydı bir ses programında sıkıştırıp (compressor) ya da "normalize" edip yüklemek: SesKlon seviyeyi zaten dengeler;
   ek işlem gürültüyü yükseltir.
-- Uzun "eee"ler, öksürük ve yarım kalmış cümlelerle dolu bir kayıt.
+- Uzun "eee"ler, öksürük ve yarım kalmış cümlelerle dolu bir referans kaydı (öksürük için ayrı tepki kaydı ekleyin).
 - Başkasının sesini izinsiz kullanmak: hukuki sorumluluk doğurur (bkz. [README → Sorumluluk](../README.md#sorumluluk-ve-izin)).

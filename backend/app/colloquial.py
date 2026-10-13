@@ -236,7 +236,7 @@ _BI_FULL_BLOCK = _NUMERIC | frozenset({
 # "ne" + olmak / yapmak biçimleri (noluyor, nolucak, napıcaksın…). Beyaz liste: "ne olay", "ne yaprak" değil.
 _NE_OL_RE = re.compile(r"ol(?:uyo|ur|ucak|acak|ucağ|acağ|du|muş|sun|sa)\w*")
 _NE_YAP_RE = re.compile(
-    r"yap(?:[ıa]cak|[ıa]cağ|ıyo|ar|t[ıi]|mış|s[ıa]|ayım|ıyım|alım|ın|mak|malı|abil|ama|mıy|may|madı|maz|mam)\w*"
+    r"yap(?:[ıa]cak|[ıa]cağ|[ıa]ca[mz]|ıyo|ar|t[ıi]|mış|s[ıa]|ayım|ıyım|alım|ın|mak|malı|abil|ama|mıy|may|madı|maz|mam)\w*"
 )
 
 # "X ile → X(y)la/(y)le": önceki sözcük bunlardan biriyse birleştirilmez.

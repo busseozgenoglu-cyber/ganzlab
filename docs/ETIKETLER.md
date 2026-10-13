@@ -1,39 +1,50 @@
 # Etiketler, noktalama ve stiller
 
 Metnin nasıl seslendirileceğini üç şey belirler: metnin içine yazdığınız **etiketler**, **noktalama** ve seçtiğiniz
-**stil**. Bu sayfa hepsinin tam listesidir. Etiketlerin kısa özeti için: [README → Stiller ve etiketler](../README.md#stiller-ve-etiketler).
+**stil**. Bu sayfa hepsinin tam başvurusudur (v4). Kısa özet: [README → Stiller ve etiketler](../README.md#stiller-ve-etiketler).
 
-## 1. Etiket yazımı
+**İçindekiler:** [1. Yazım kuralları](#1-yazım-kuralları) · [2. Duygular](#2-duygular-24) ·
+[3. Yoğunluk](#3-duygu-yoğunluğu) · [4. Karışım](#4-duygu-karışımı) · [5. Geçiş (kayış)](#5-duygu-geçişi-kayış) ·
+[6. Hız, perde, konuşmacı](#6-satır-içi-kontroller-hız-perde-konuşmacı) · [7. Vurgu](#7-vurgu) ·
+[8. Okunuş](#8-okunuş-yazılışokunuş) · [9. Sözsüz tepkiler](#9-sözsüz-tepkiler) · [10. Duraklamalar](#10-duraklamalar) ·
+[11. Noktalama](#11-noktalamanın-etkisi) · [12. Diyalog biçimleri](#12-diyalog-biçimleri) ·
+[13. Stiller](#13-stil-ön-ayarları) · [14. Örnekler](#14-örnek-metinler) · [15. Pratik öneriler](#15-pratik-öneriler)
+
+## 1. Yazım kuralları
 
 | Tür | Yazım | Etki |
 |---|---|---|
-| Duygu (sürekli) | `[üzgün] Metin…` | Bir sonraki duygu etiketine kadar geçerlidir |
-| Duygu (kapsamlı) | `[heyecanlı: Yalnızca bu cümle.]` | Yalnızca köşeli parantezin içine uygulanır; sonra önceki duyguya dönülür |
-| Sıfırlama | `[normal]` | Duyguyu kaldırır |
-| Sözsüz | `[gülme]`, `[iç çekme]` | En yakın ünleme çevrilip cümlenin içinde seslendirilir ("Hahaha!") |
-| Duraklama | `[duraklama]`, `[1.5 sn]` | O noktada ara verir |
-| Vurgu | `*sözcük*`, `[vurgu] sözcük`, `[vurgu: kısa öbek]` | İşaretlenen sözcük ya da öbek vurgulanır; yıldızlar ve etiket okunmaz |
+| Duygu (sürekli) | `[üzgün] Metin…` | Bir sonraki duygu etiketine kadar geçerli |
+| Duygu (kapsamlı) | `[heyecanlı: Yalnızca bu cümle.]` | Yalnızca parantezin içine; sonra önceki duyguya dönülür |
+| Yoğunluk | `[heyecanlı:3]` `[çok kızgın]` `[üzgün %80]` | Duygunun şiddeti ([bölüm 3](#3-duygu-yoğunluğu)) |
+| Karışım | `[üzgün+umutlu]` | İki-üç duygunun harmanı ([bölüm 4](#4-duygu-karışımı)) |
+| Geçiş (kayış) | `[heyecanlı→sakin]` `[sakinleşerek]` | Bölüm boyunca bir duygudan ötekine ([bölüm 5](#5-duygu-geçişi-kayış)) |
+| Kontrol | `[hız:0.9]` `[perde:+1]` `[ses:Ayşe]` | Tempo, perde, konuşmacı; duygudan bağımsız ([bölüm 6](#6-satır-içi-kontroller-hız-perde-konuşmacı)) |
+| Sıfırlama | `[normal]` · `[hız]` `[perde]` | Duyguyu · kontrolü kaldırır |
+| Vurgu | `*sözcük*` `[vurgu] sözcük` `[vurgu: öbek]` | Tek sözcük ya da kısa öbek vurgulanır |
+| Okunuş | `{yazılış\|okunuş}` | Sözcük yazdığınız gibi okunur ([bölüm 8](#8-okunuş-yazılışokunuş)) |
+| Sözsüz tepki | `[gülme]` `[iç çekme]` `[hmm]` | Sesin gerçek tepki kaydı ya da en yakın ünlem |
+| Duraklama | `[nefes]` `[duraklama]` `[1.5 sn]` | O noktada ara |
 
 Kurallar:
 
 - Büyük/küçük harf ve Türkçe karakter fark etmez: `[HEYECANLI]`, `[heyecanli]`, `[Heyecanlı]` aynıdır.
-- Her etiketin Türkçe ve İngilizce eş anlamlıları vardır; ElevenLabs tarzı `[excited]`, `[whispers]`, `[laughs]`,
-  `[sighs]` de çalışır.
-- Tanınmayan etiket sessizce yok sayılır. Köşeli parantez içindeki tanınmayan ifadeler (ör. `[not: burayı düzelt]`)
-  seslendirilmez.
-- Kapsamlı etiketin adı en fazla 30 karakter olabilir; içerik herhangi bir uzunlukta olabilir.
-- Satır başında "Heyecanlı: …" biçimi etiket sayılmaz (diyalog metinleriyle karışmasın diye); köşeli parantez kullanın.
-- Duygu ve duraklama etiketleri metni o noktada ayrı parçalara böler; her parça ayrı üretilir. Bu yüzden etiketleri
-  mümkünse cümle başlarına ya da cümle aralarına koyun.
-- Üretim sonucunun ayrıntılarında (`params.chunks`) her parça için uygulanan duygu, referans ve duraklama görünür;
+- Etiketlerin Türkçe ve İngilizce eş adları vardır; ElevenLabs tarzı `[excited]`, `[whispers]`, `[laughs]`, `[sighs]` de
+  çalışır.
+- Tanınmayan etiket sessizce yok sayılır; köşeli parantez içindeki hiçbir şey seslendirilmez (`[not: burayı düzelt]`).
+- Kapsamlı etiketin adı en fazla 30 karakter olabilir (`[çok heyecanlı: …]`); içerik herhangi bir uzunlukta olabilir.
+- Satır başındaki "Heyecanlı: …" biçimi duygu etiketi değildir (diyalogda konuşmacı adı sayılır); köşeli parantez kullanın.
+- Duygu, kontrol, duraklama ve sözsüz etiketleri metni o noktada **ayrı parçalara böler**; her parça ayrı üretilir.
+  Etiketleri mümkünse cümle başlarına ya da cümle aralarına koyun.
+- Üretim sonucunun ayrıntılarında (`params.chunks`) her parçanın duygusu, yoğunluğu, referansı ve duraklaması görünür;
   bir etiketin çalışıp çalışmadığını buradan anlayabilirsiniz.
 
-## 2. Duygu etiketleri
+## 2. Duygular (24)
 
-**Vurgu** (`exaggeration`), **Sadakat** (`cfg_weight`) ve **Sıcaklık** (`temperature`) sütunları, o etiketli bölüm
-üretilirken kullanılan değerlerdir; "—" olanlarda istekteki ya da stildeki değer geçerlidir. **Duraklama ×** cümle
-arası duraklamaların çarpanıdır. Noktalamanın etkisi (bölüm 5) bunların üstüne eklenir ve motor değerleri güvenli bir
-aralıkta tutar.
+**Vurgu** (`exaggeration`), **Sadakat** (`cfg_weight`) ve **Sıcaklık** (`temperature`), o etiketli bölüm üretilirken
+kullanılan değerlerdir; "—" olanlarda istekteki ya da stildeki değer geçerlidir. **Duraklama ×** cümle arası
+duraklamaların çarpanıdır. Noktalama (bölüm 11) ve yoğunluk (bölüm 3) bunların üstüne eklenir; motor sonucu güvenli
+aralıkta tutar (vurgu 0,3–0,95, sadakat 0,3–0,7).
 
 | Etiket | Ne zaman | Eş anlamlılar | Vurgu | Sadakat | Sıcaklık | Duraklama × |
 |---|---|---|---|---|---|---|
@@ -62,60 +73,176 @@ aralıkta tutar.
 | `[hızlı]` | Tempoyu artırır, duraklamaları kısaltır. | `hizli`, `fast`, `acele`, `quick`, `rapid`, `çabuk`, `seri` | — | — | — | 0,7 |
 | `[yavaş]` | Tempoyu düşürür, duraklamaları uzatır. | `yavas`, `slow`, `ağır`, `slowly`, `ağır ağır`, `yavaşça` | — | — | — | 1,4 |
 
-- `[hızlı]` tempoyu ×1,12, `[yavaş]` ×0,9 yapar. Diğer duyguların küçük tempo, perde ve şiddet farkları yalnızca
-  "Ses işleme seviyesi" (`emotion_fx`) **hafif** ya da **tam** iken uygulanır; varsayılan **kapalı** en doğal sonucu verir.
-- `[vurgulu]` bir duygudur ve bölümün tamamını etkiler; tek bir sözcüğü vurgulamak için `*sözcük*` ya da `[vurgu]` kullanın.
+- `[hızlı]` tempoyu ×1,1, `[yavaş]` ×0,9 yapar (duygu etiketlerinin temposu 0,9–1,1 arasında tutulur; daha büyük
+  değişiklik için `[hız:0.8]`). Diğer duyguların küçük tempo, perde ve şiddet farkları yalnızca "Ses işleme seviyesi"
+  (`emotion_fx`) **hafif** ya da **tam** iken uygulanır; varsayılan **kapalı** en doğal sonucu verir.
+- `[vurgulu]` bir duygudur ve bölümün tamamını etkiler; tek bir sözcük için `*sözcük*` ya da `[vurgu]` kullanın.
 - Duyguyu en çok, o duygu için aldığınız **duygu kaydı** taşır ([Kayıt rehberi → Duygu kayıtları](KAYIT_REHBERI.md#7-duygu-kayıtları)).
 - "İçerikten otomatik duygu" (`auto_emotion`) açıksa etiketsiz cümlelerin duygusu sözcüklerden ("harika", "maalesef",
   "yeter artık"…), olumsuzluktan ("hiç güzel değil"), noktalamadan ve büyük harf oranından tahmin edilir.
 
-## 3. Sözsüz etiketler
+```
+[samimi] Hoş geldiniz! [ciddi] Başlamadan önce kısa bir uyarı. [normal] Hadi başlayalım.
+```
 
-Model gülme, iç çekme, ağlama gibi sesleri gerçekten üretemez. Bu etiketler aşağıdaki ünlemlere çevrilir ve cümlenin
-akışı içinde seslendirilir (tek başına üretilen ünlemler modelde bozulmaya yol açıyor). `[hahahaha]`, `[hihihi]`
-gibi tekrarlı yazımlar da tanınır.
+## 3. Duygu yoğunluğu
+
+Bir duygunun şiddetini etiketin içinde ayarlarsınız. Yoğunluk (k) 0,5–1,6 arasındadır; 1 = tablodaki değerler.
+
+| Yazım | k | Not |
+|---|---|---|
+| `[heyecanlı:1]` · `[heyecanlı:2]` · `[heyecanlı:3]` | 0,7 · 1 · 1,4 | Hafif · normal · güçlü |
+| `[biraz üzgün]` `[hafif üzgün]` `[az üzgün]` | 0,65 | Ayrıca `birazcık`, `azıcık`, `hafifçe`, `slightly`, `a bit` |
+| `[çok kızgın]` `[epey kızgın]` `[oldukça kızgın]` | 1,35 | Ayrıca `very` |
+| `[aşırı heyecanlı]` `[çok çok heyecanlı]` `[son derece heyecanlı]` | 1,6 | Ayrıca `extremely` |
+| `[heyecanlı %150]` · `[%120 heyecanlı]` · `[üzgün:%80]` | 1,5 · 1,2 · 0,8 | Yüzde 50–160'a sıkıştırılır (`[kızgın %200]` → 1,6) |
+
+- Sözcük ve sayı birlikte yazılırsa çarpılır ve sınıra sıkıştırılır: `[çok heyecanlı:3]` → 1,35 × 1,4 → 1,6.
+- ASCII yazım da tanınır: `[cok kizgin]`, `[asiri heyecanli]`. Kapsamlı yazılabilir: `[çok heyecanlı: Kazandık!]`.
+- **Ne değişir:** yoğunluk, duygunun nötrden uzaklığını ölçekler. Vurgu = 0,5 + (vurgu − 0,5) × k (0,25–0,95),
+  sadakat = 0,5 + (sadakat − 0,5) × k (0,3–0,7), duraklama çarpanı = 1 + (çarpan − 1) × k; ses işleme açıkken tempo ve
+  seviye de. Sıcaklık ve referans kaydı değişmez. Örnek: heyecanlı (vurgu 0,7) `:3` ile 0,78, `:1` ile 0,64 olur.
+  Enerjik duygularda vurgu artar; üzgün, sakin gibi düşük enerjili duygularda azalır (daha durgun) ve duraklamalar uzar.
+
+```
+[heyecanlı:1] Paketiniz yola çıktı. [heyecanlı:3] Ve yarın kapınızda!
+[biraz üzgün] Toplantı ertelendi. [çok üzgün] Proje de iptal edildi.
+```
+
+## 4. Duygu karışımı
+
+`[birincil+ikincil]` iki ya da üç duyguyu harmanlar: birincil %70, ikinciller kalan %30'u eşit paylaşır (en çok iki
+ikincil; fazlası atılır). Vurgu, sadakat, sıcaklık, tempo, duraklama, seviye ve fısıltı oranı ağırlıklı ortalanır;
+referans kaydı **birincilin** kaydıdır. Yoğunlukla birlikte yazılabilir: `[çok üzgün+umutlu]`.
+
+```
+[üzgün+umutlu] Zor bir yıldı, biliyorum. Ama önümüzdeki bahar her şey değişecek.
+[mutlu+nostaljik] Çocukken bu sokakta saatlerce top oynardık.
+```
+
+## 5. Duygu geçişi (kayış)
+
+Bölüm boyunca bir duygudan ötekine yavaşça geçer.
+
+| Yazım | Geçiş |
+|---|---|
+| `[heyecanlı→sakin]` (ayrıca `->`, `=>`, `>`) | Heyecanlıdan sakine |
+| `[→sakin]` | O anki duygudan sakine |
+| `[sakinleşerek]` · `[heyecanlanarak]` · `[yumuşayarak]` · `[sertleşerek]` | → sakin · heyecanlı · samimi · kızgın |
+| `[hüzünlenerek]` · `[neşelenerek]` · `[ciddileşerek]` | → üzgün · mutlu · ciddi |
+| `[heyecanlı→sakin: …]` | Yalnızca parantezin içinde; sonra önceki duyguya dönülür |
+
+- Geçiş, etiketten sonraki metne (bir sonraki etikete kadar) uygulanır; bölüm bitince ses hedef duyguda kalır.
+- Geçiş **parça parça** ilerler (≈170 karakterlik cümle grupları). Tek parçalık kısa bölüm doğrudan hedef duyguyla
+  okunur; kademeli geçiş için en az iki-üç parçalık (≈300+ karakter) bölüm yazın.
+- Bölümün ilk yarısında başlangıç duygusunun, ikinci yarısında hedef duygunun kaydı referans alınır; vurgu, sadakat ve
+  duraklama hedefe doğru kayar.
+
+```
+[heyecanlı→sakin] Kazandık! İnanamıyorum, gerçekten kazandık ve herkes sahaya koştu, bağırıyor, sarılıyordu.
+Sonra kalabalık yavaş yavaş dağıldı, ışıklar söndü. Stadyumda yalnızca rüzgârın sesi kaldı.
+```
+
+## 6. Satır içi kontroller: hız, perde, konuşmacı
+
+| Yazım | Değer | Eş ad | Sıfırlama |
+|---|---|---|---|
+| `[hız:0.9]` | 0,7–1,3; `0,9`, `1.1x`, `%90` de olur | `tempo` | `[hız]`, `[hız:normal]` |
+| `[perde:+1]` | −4…+4 yarım ton; `-2`, `−1,5` | `pitch` | `[perde]`, `[perde:normal]` |
+| `[ses:Ayşe]` | Konuşmacı adı (en çok 40 karakter) | `konuşmacı` | — (yeni `[ses:Ad]` yazılır) |
+
+- Hız ve perde duygudan bağımsızdır ve bir sonraki aynı tür kontrole kadar sürer; `normal` yerine `varsayılan`,
+  `default`, `sıfırla` da yazılabilir. Aralık dışı değer yok sayılır (`[hız:1.5]` etkisizdir).
+- `[hız:…]` istekteki **Hız** (`speed`) ve `[hızlı]`/`[yavaş]` ile çarpılır; perde korunur. `[hız:…]` ve
+  `[perde:…]` ffmpeg gerektirir (yoksa etkisizdir). ±1–2 yarım tonluk perde doğal kalır; büyük kaymalar sesin
+  karakterini değiştirebilir.
+- `[ses:Ad]` yalnızca **Diyalog** modunda sesi değiştirir ([bölüm 12](#12-diyalog-biçimleri)); tek sesli
+  seslendirmede yok sayılır.
+
+```
+[hız:0.85] Şimdi dikkatle dinleyin: şifreniz üç, yedi, dokuz. [hız] Tekrar ediyorum.
+[perde:-1] Gecenin bir yarısı kapı çaldı. [perde] Kimse yoktu.
+```
+
+## 7. Vurgu
+
+| Yazım | Vurgulanan |
+|---|---|
+| `Bu *çok* önemli.` | Yıldızlar arasındaki sözcük |
+| `**hemen şimdi**` ya da `*hemen şimdi*` | Kısa öbek (en çok 60 karakter) |
+| `[vurgu] yarın geliyorum.` | Etiketten sonraki ilk sözcük ("yarın") |
+| `[vurgu: hemen şimdi] gel.` | Parantezdeki öbek |
+
+Vurgulu sözcük ayrı bir parça olarak biraz daha güçlü (vurgu +0,15, en çok 0,95) ve biraz daha yavaş (×0,95)
+üretilir; önüne 110 ms, ardına 40 ms mikro duraklama gelir. Sözcüğün o bölümdeki her geçişi vurgulanır; yıldızlar ve
+etiket okunmaz. `2*3*4` gibi yazımlar vurgu sayılmaz. Az kullanın: her vurgu metni böler.
+
+## 8. Okunuş: {yazılış|okunuş}
+
+Bir sözcüğün bu metinde nasıl okunacağını süslü parantezle yazarsınız:
+
+```
+{Claude|Klod} bugün yeni sürümü duyurdu. Toplantı {Zoom|Zum} üzerinden yapılacak.
+```
+
+- `{Claude|Klod}` → "Klod"; `{Klod}` → "Klod" (`|` yoksa içerik aynen); okunuş boşsa yazılış kullanılır.
+- İç içe yazılmaz; köşeli parantez etiketlerinin içine dokunulmaz. Dilden bağımsız çalışır.
+- Okunuş sonraki katmanlardan da geçer (sayılar okunur, konuşma dili uygulanır). Metnin modele nasıl gideceğini
+  **Telaffuz → Dene** gösterir. Zincir: okunuş → sohbet kısaltmaları → telaffuz sözlüğü → normalizasyon → konuşma
+  dili → (açıksa) konuşma dolguları.
+- Aynı sözcük her metinde aynı okunsun istiyorsanız **Telaffuz** sekmesindeki sözlüğe ekleyin (genel ya da yalnız bir
+  ses için; API: `/api/lexicon`). Sözlük yalnızca Türkçe metinde uygulanır; sözcük sınırına bakar, büyük/küçük harf
+  duyarsızdır, kesmeli eki korur ("Claude'un" → "Klod'un").
+
+## 9. Sözsüz tepkiler
+
+Sesin **gerçek tepki kaydı** varsa (Sesler → ses kartı → **Gerçek tepkiler**) etiket yerine o kayıt çalınır: önceki
+konuşma parçasının yaklaşık 4 dB altına oturtulur, her kullanımda hafif farklıdır (seviye ±1,5 dB; ffmpeg varsa tempo
+±%3, perde ±0,3 yarım ton) ve ardından 140 ms'lik kısa bir boşlukla konuşma sürer. Kayıt yoksa etiket aşağıdaki ünleme
+çevrilir ve önceki cümlenin sonuna eklenerek okunur. Kayıt rehberi: [Gerçek tepki kayıtları](KAYIT_REHBERI.md#8-gerçek-tepki-kayıtları).
+
+**Kaydedilebilir 15 tepki** (eş adlar aynı kayda gider)
+
+| Anahtar | Arayüzde | Metinde eş adlar | Kayıt yoksa okunuş |
+|---|---|---|---|
+| `[gülme]` | Gülme | `[güler]` `[gülüyor]` `[gülüş]` `[laughs]` `[laugh]` `[laughing]` `[haha]` `[hahaha]` | Hahaha! |
+| `[kahkaha]` | Kahkaha | `[kahkaha atar]` `[kahkahalar]` `[laughs hard]` | Hahahaha! |
+| `[kıkırdama]` | Kıkırdama | `[kıkırdar]` `[giggles]` `[giggle]` `[hihi]` `[chuckles]` `[chuckle]` `[kıs kıs güler]` | Hihihi! |
+| `[iç çekme]` | İç çekme | `[iç çeker]` `[sighs]` `[sigh]` | Ahh... |
+| `[hmm]` | Hmm | `[hm]` `[düşünür]` `[thinks]` | Hmm... |
+| `[of]` | Of | `[off]` `[pff]` `[pf]` `[pöf]` `[puflar]` | Off... |
+| `[nefes verir]` | Nefes verme | `[nefes verme]` `[exhales]` | Hoff... |
+| `[öksürür]` | Öksürük | `[öksürük]` `[coughs]` `[cough]` | Öhö öhö. |
+| `[boğaz temizler]` | Boğaz temizleme | `[boğazını temizler]` `[clears throat]` `[ehem]` | Ehem. |
+| `[esner]` | Esneme | `[esneme]` `[yawns]` | Aaah... |
+| `[ağlar]` | Ağlama | `[ağlıyor]` `[ağlama]` `[cries]` `[sobs]` | Hıh hıh... |
+| `[şaşırır]` | Şaşırma | `[vay canına]` `[vay]` `[wow]` `[gasps]` `[gasp]` `[hah]` `[nefesi kesilir]` | Vay canına! |
+| `[hıh]` | Hı hı (onay) | `[hı hı]` `[hıhı]` `[ıhı]` `[onay]` `[uh huh]` | Hıh. |
+| `[mmm]` | Mmm | `[mm]` `[lezzet]` `[yum]` | Mmm... |
+| `[cık]` | Cık cık | `[cık cık]` | Cık cık. |
+
+**Yalnızca okunan tepkiler** (kaydedilemez)
 
 | Okunuş | Etiketler |
 |---|---|
-| Hahaha! | `[gülme]` `[güler]` `[gülüyor]` `[gülüş]` `[laughs]` `[laugh]` `[laughing]` `[hahaha]` |
-| Haha! | `[haha]` |
-| Hahahaha! | `[kahkaha]` `[kahkaha atar]` `[kahkahalar]` `[laughs hard]` |
-| Hihihi! | `[kıkırdama]` `[kıkırdar]` `[giggles]` `[giggle]` |
-| Hihi! | `[hihi]` |
-| Heh heh. | `[chuckles]` `[chuckle]` `[kıs kıs güler]` |
-| Ahh... | `[iç çekme]` `[iç çeker]` `[sighs]` `[sigh]` |
-| Hoff... | `[nefes verir]` `[nefes verme]` `[exhales]` |
-| Off... | `[of]` `[off]` |
-| Pöf... | `[pff]` `[pf]` `[pöf]` `[puflar]` |
-| Hmm... | `[hmm]` `[hm]` `[düşünür]` `[thinks]` |
 | Iıı... | `[ıı]` `[ee]` `[dolgu]` `[um]` `[uh]` |
 | Şey... | `[şey]` |
-| Hı hı. | `[hı hı]` `[hıhı]` `[ıhı]` `[onay]` `[uh huh]` |
-| Mmm... | `[mmm]` `[mm]` `[lezzet]` `[yum]` |
-| Hmm hmm hmm. | `[hums]` `[hum]` `[mırıldanır]` |
+| Hmm hmm hmm. | `[mırıldanır]` `[hums]` `[hum]` |
 | Evet, evet. | `[evet evet]` |
-| Cık cık. | `[cık]` `[cık cık]` |
-| Vay canına! | `[şaşırır]` `[vay canına]` |
-| Vay! | `[wow]` `[vay]` |
-| Hah! | `[gasps]` `[gasp]` `[hah]` `[nefesi kesilir]` |
-| Tüh! | `[tüh]` |
-| Aman! | `[aman]` |
-| Ay! | `[ay]` |
-| Oh... | `[oh]` |
-| Hıh. | `[hıh]` |
-| Yok ya! | `[yok ya]` |
-| Hişt! | `[hişt]` |
-| Pişt! | `[pişt]` |
+| Tüh! · Aman! · Ay! · Oh... · Yok ya! | `[tüh]` · `[aman]` · `[ay]` · `[oh]` · `[yok ya]` |
+| Hişt! · Pişt! | `[hişt]` · `[pişt]` |
 | Fiiüüt! | `[ıslık]` `[ıslık çalar]` `[whistles]` |
-| Ohh... | `[groans]` `[groan]` `[inler]` `[inleme]` |
-| Hıh hıh... | `[ağlar]` `[ağlıyor]` `[ağlama]` `[cries]` `[sobs]` |
+| Ohh... | `[inler]` `[inleme]` `[groans]` `[groan]` |
 | Hık! | `[hıçkırır]` |
-| Sniff. | `[sniffs]` `[sniff]` `[burnunu çeker]` |
-| Öhö öhö. | `[öksürür]` `[öksürük]` `[coughs]` `[cough]` |
-| Ehem. | `[boğaz temizler]` `[boğazını temizler]` `[clears throat]` `[ehem]` |
-| Aaah... | `[esner]` `[esneme]` `[yawns]` |
+| Sniff. | `[burnunu çeker]` `[sniffs]` `[sniff]` |
 
-## 4. Duraklama etiketleri
+- Tekrarlı yazımlar da tanınır: `[hahahaha]` → gülme, `[hihihi]` → kıkırdama, `[hmmm]` → hmm, `[offf]` → of.
+- Sözsüz etiket metni o noktada böler. Kayıt yoksa etiketi cümle **sonuna** yazın (`Bunu duyunca çok güldüm. [gülme]`):
+  ünlem önceki cümleyle birlikte üretilir. Satırın başındaki etiket tek başına üretilir ve daha yapay duyulabilir.
+- Hangi tepkinin gerçek kayıttan çalındığı sonuçta "Kullanılan tepkiler" satırında (`params.nonverbal_used`) görünür.
+- Kayıt yoksa etiketin **kendi** okunuşu seslendirilir: `[hı hı]` → "Hı hı.", `[vay]` → "Vay!", `[gülme]` → "Hahaha!".
+
+## 10. Duraklamalar
 
 **Sabit duraklamalar**
 
@@ -137,10 +264,15 @@ gibi tekrarlı yazımlar da tanınır.
 | `[2 saniye]` · `[2 s]` · `[2 sec]` | 2 sn |
 | `[duraklama: 1 sn]` · `[pause 2s]` · `[bekle 3 sn]` | 1 sn · 2 sn · 3 sn |
 
-Birimler: `ms`, `msn`, `milisaniye`, `sn`, `s`, `saniye`, `sec`, `second(s)`. Art arda yazılan duraklamalar toplanır.
-`[nefes]` yalnızca ara açar; nefes sesleri "Nefes" ayarı (`breaths`) açıkken uygun aralara kendiliğinden yerleştirilir.
+Birimler: `ms`, `msn`, `milisaniye`, `sn`, `s`, `saniye`, `sec`, `second(s)`. Etiket duraklamaları ölçeklenmeden,
+birebir eklenir; art arda yazılanlar toplanır (bir noktada en çok 10 sn). `[nefes]` yalnızca ara açar; nefes sesleri
+"Nefes" ayarı (`breaths`) açıkken uygun aralara kendiliğinden yerleştirilir.
 
-## 5. Noktalamanın etkisi
+```
+Ve kazanan… [2 sn] Ayşe! [kısa duraklama] Tebrikler.
+```
+
+## 11. Noktalamanın etkisi
 
 | İşaret | Ton (noktalamaya göre duygu açıkken) | Ardından temel duraklama |
 |---|---|---|
@@ -152,18 +284,76 @@ Birimler: `ms`, `msn`, `milisaniye`, `sn`, `s`, `saniye`, `sec`, `second(s)`. Ar
 | `,` `;` `:` | Cümle içi duraklamayı model kendisi verir; çok uzun cümle bu işaretlerden bölünürse kısa ara | 0,18–0,3 sn |
 | `—` (uzun tire), `( )` | Kısa duraklamaya çevrilir | — |
 
-- Temel süreler sonra **bağlama göre** ayarlanır: sonraki cümle bağlaçla başlıyorsa ("ama", "çünkü", "yani", "hatta"…)
-  %35 kısalır; sorudan sonra kısa bir cevap geliyorsa %20 kısalır; çok uzun cümleden sonra %15 uzar; kısa cümleden
-  sonra çabuk devam edilir; hiçbir iki duraklama birebir aynı olmasın diye ±%12 oynatılır. Sonuç 0,06–2,5 sn arasında
-  tutulur.
-- Ardından duygunun çarpanı (bölüm 2), istekteki ya da stildeki **Duraklama** (`pause_scale`) ve sesin kayıttan
+- Temel süreler sonra **bağlama göre** ayarlanır: sonraki cümle bağlaçla başlıyorsa ("ama", "çünkü", "yani"…) %35
+  kısalır; sorudan sonra kısa bir cevap geliyorsa %20 kısalır; çok uzun cümleden sonra %15 uzar; kısa cümleden sonra
+  çabuk devam edilir; iki duraklama birebir aynı olmasın diye ±%12 oynatılır. Sonuç 0,06–2,5 sn arasında tutulur.
+- Ardından duygunun çarpanı (bölüm 2–3), istekteki ya da stildeki **Duraklama** (`pause_scale`) ve sesin kayıttan
   ölçülen kişisel ritmi (`pauses.scale`) uygulanır.
 - `!!!` → `!`, `??` → `?`, `?!` → `?` olarak sadeleştirilir; tekrar etkiyi artırmaz. Emojiler okunmaz.
-- **Haber** stilinde "noktalamaya göre duygu" kapalıdır: `!` ve `?` tonu daha az etkiler, okuma tarafsız kalır.
+- **Haber** stilinde "noktalamaya göre duygu" kapalıdır: `!` ve `?` tonu daha az etkiler.
 - Tamamı büyük harfle yazılmış cümleler ("ARTIK YETER!") harf harf okunmaz; otomatik duygu açıksa kızgın ya da
-  heyecanlı tona iter. Kısa büyük harfli sözcükler ise kısaltma sayılıp harf harf okunabilir ("ABD" → "a be de").
+  heyecanlı tona iter. Kısa büyük harfli sözcükler kısaltma sayılıp harf harf okunabilir ("ABD" → "a be de").
 
-## 6. Stil ön ayarları
+## 12. Diyalog biçimleri
+
+**Diyalog** sekmesinde (API'de `speakers` gönderilince) her satır konuşmacısının sesiyle üretilir. **Seslendir**
+sekmesinde "Ayşe:" önekleri düz metin olarak okunur.
+
+| Biçim | Örnek | Not |
+|---|---|---|
+| `Ad: metin` | `Ayşe: Selam, naber?` | Satır başında; ayraçtan sonra boşluk ve metin gelmeli (`Ayşe:Selam` ad sayılmaz) |
+| `Ad — metin` · `Ad - metin` | `MEHMET — İyiyim, sen?` | Uzun tire (— –) ya da iki yanı boşluklu kısa tire |
+| `[ses:Ad] metin` | `[ses:Mehmet] Hadi! [ses:Ayşe] Sonra.` | Satır ortasında da yeni sıra başlatır; `[konuşmacı:Ad]`, `[speaker:Ad]`, `[voice:Ad]`, `[ses: Ad]` |
+| `Ad (yönerge): metin` | `Ayşe (fısıldayarak): Gel buraya.` | Yönerge sıranın başına etiket olur: `[fısıldayarak] Gel buraya.`; ad yanında en çok 3; çözülemeyen ("kapıyı açar") atılır |
+| `Ad [etiket]: metin` | `Ayşe [heyecanlı]: Kazandık!` | Etiket olduğu gibi sıraya geçer |
+| `(yönerge)` | `(sessizlik)` · `Ayşe: (güler) Selam!` | Tek başına satır ya da sıra başı; etiketse uygulanır, değilse okunmaz |
+| Adsız satır | `Akşam olmuş, kafe kalabalık.` | Metnin başındaysa **anlatıcı**; sonra önceki konuşmacının devamı |
+
+**Konuşmacı adı:** 1–3 sözcük, en çok 40 karakter, büyük harfle başlar ("Dr. Ayşe Yılmaz"); küçük harfli hitaplar
+olur ("Ali bey", "Fatma teyze", "Hasan usta", "Ayşe abla"). Rakam içeren ad olmaz. Büyük/küçük harf aynı kişidir
+(`AYŞE` = `Ayşe`; ilk yazım korunur); daha önce geçen ad küçük harfle de yazılabilir (`ayşe:`).
+
+**Anlatıcı:** Metnin başındaki adsız satırları anlatıcı okur; sesi `narrator_voice_id` (arayüzde "Anlatıcı" satırı),
+verilmezse `voice_id`, o da yoksa modelin varsayılan sesidir. Bir konuşmacı konuştuktan sonra adsız satır o
+konuşmacının devamıdır; anlatıcıya dönmek için satırı `Anlatıcı:` ile başlatın. Diyalog sekmesi `Anlatıcı:` ve
+`Anlatan:` satırlarını anlatıcı sesine bağlar; API'de bunlar sıradan konuşmacı adıdır (`speakers` içinde onlara da
+ses verin).
+
+**Başlık istisnaları** (ad sayılmaz, satır önceki konuşmacının metni olarak okunur): `Not`, `Örnek`, `Dikkat`,
+`Uyarı`, `Soru`, `Cevap`, `Özet`, `Başlık`, `Konu`, `Tarih`, `Saat`, `Adres`, `Telefon`, `Fiyat`, `Önemli`, `Sonuç`,
+`Kaynak`, `Açıklama`, `İpucu`, `Adım` (çoğulları da: `Notlar:`); ayrıca söylem sözcükleri (`Yani:`, `Mesela:`…),
+belge/senaryo başlıkları (`Bölüm:`, `Sahne:`, `Madde:`…), iletişim alanları (`Tel:`, `E-posta:`…), ünlemler
+(`Hey:`, `Aman:`…), `Saat 12:30:` ve `1. Bölüm:` gibi rakamlı satırlar ve adresler (`https://…`). Röportaj için
+`Soru:`/`Cevap:` yerine `Muhabir:`/`Konuk:` yazın.
+
+**Sıra alma:** Her dolu satır en az bir ayrı sıradır. Sıralar arası temel duraklama: aynı konuşmacı devam ederse
+450 ms; konuşmacı değişince 260 ms (sorudan sonra 200, ünlemden sonra 230, "..." sonrası 520; önceki sıra 6 sn'den
+uzunsa +80); ±%15 oynatılır, 120–1500 ms arasında tutulur; ardından bağlam ve **Duraklama** ayarı uygulanır. Her
+konuşmacının kendi gerçek tepki kayıtları ve telaffuz sözlüğü kullanılır.
+
+```
+Akşam olmuş, kafede iki eski arkadaş karşılaşır.
+Ayşe: [heyecanlı] Mehmet? Sen misin? Yıllar oldu!
+Mehmet: [gülme] Ayşe! Hiç değişmemişsin.
+Ayşe (fısıldayarak): Sana bir sır vereyim mi?
+[ses:Mehmet] [çok şaşkın] Ne sırrı? [ses:Ayşe] Sonra anlatırım.
+```
+
+**Yönergeler ve notlar**
+
+- Parantezli yönergeler etikete çevrilir: `(gülerek)` → `[güler]`, `(bağırarak)` → `[kızgın]`, `(heyecanla)` →
+  `[heyecanlı]`, `(alaycı bir sesle)` → `[alaycı]`, `(fısıldayarak)` → fısıltı. Doğrudan etiket adı olan yönergeler
+  olduğu gibi kalır (`(biraz üzgün)` yoğunluğu korur, `(2 sn)` duraklamadır). Çözülemeyen sahne notu (`(kapıyı açar)`)
+  atılır.
+- İstekteki `emotion` ve stilin varsayılan duygusu diyalogda uygulanmaz; konuşmacı başına varsayılan duygu için
+  arayüzdeki "varsayılan duygu" seçimini ya da API'de `speaker_emotions` kullanın. Sıra bir **duygu** etiketiyle
+  başlıyorsa eklenmez; `[gülme]` ya da `[2 sn]` ile başlayan sıraya yine eklenir.
+- `Anlatıcı:`, `Anlatan:`, `Dış ses:` önekleri konuşmacı değil anlatıcıdır (anlatıcı sesiyle okunur, `is_dialog`
+  sayımına girmez).
+- Yalnızca duraklama içeren sıra (`Mehmet: [2 sn]`) sessiz bir bekleyiş olarak önceki sıranın sonuna eklenir.
+- Sesi seçilmemiş konuşmacı modelin varsayılan sesiyle okunur.
+
+## 13. Stil ön ayarları
 
 Stil, bir kullanım için ayar setidir. İstekte `style` verildiğinde, istekte **verilmeyen** alanlar stilden gelir;
 verdiğiniz alanlar stilin değerini ezer (arayüzde bir ayarı değiştirince stil "özelleştirilmiş" görünür). Stil adı
@@ -185,12 +375,14 @@ stillerde nefes açıktır. Sesler sekmesinde bir sese varsayılan stil atanabil
 | `müşteri-hizmeti` | Nazik ve yardımsever; çağrı merkezi ve karşılama mesajları için. | `nazik` | 0,45 | 0,5 | 0,8 | 0,98 | 1,05 | off | açık | kapalı | `support`, `customer support`, `customer service`, `müşteri hizmetleri` |
 | `spor-spikeri` | Maç anlatır gibi heyecanlı ve hızlı. | `heyecanlı` | 0,85 | 0,3 | 0,95 | 1,08 | 0,7 | light | açık | kapalı | `sports`, `sport`, `sports commentator`, `commentator` |
 
-Stilin **duygusu**, metinde etiket olmayan bölümlere uygulanır; metindeki etiketler her zaman önceliklidir.
-**Konuşma dili** seviyeleri: `off` metne dokunmaz; `light` "geleceğim → gelicem", "bir şey → bişey", "ne yapacaksın →
-napıcaksın" gibi güvenli kısaltmaları yapar; `full` bunlara ek olarak "geliyorum → geliyom", "böyle → böle",
-"değil → diil" der. Özel adlara, kısaltmalara ve yabancı sözcüklere dokunulmaz.
+Stilin **duygusu**, metinde etiket olmayan bölümlere uygulanır (diyalogda uygulanmaz); metindeki etiketler her
+zaman önceliklidir. **Konuşma dili** seviyeleri: `off` metne dokunmaz; `light` "geleceğim → gelicem", "bir şey →
+bişey", "ne yapacaksın → napıcaksın" gibi güvenli kısaltmaları yapar; `full` bunlara ek olarak "geliyorum →
+geliyom", "böyle → böle", "değil → diil" der. Özel adlara, kısaltmalara ve yabancı sözcüklere dokunulmaz.
+**Konuşma dolguları** (`fillers`) haber, belgesel, sesli kitap, eğitim, müşteri hizmeti ve anlatıcı stillerinde
+eklenmez.
 
-## 7. Örnek metinler
+## 14. Örnek metinler
 
 Aşağıdaki "Okunuş" satırları, normalizasyon ve konuşma dili katmanının modele verdiği metinden kesitlerdir.
 
@@ -234,21 +426,32 @@ dokuz lira** yerine sadece **iki yüz doksan dokuz lira**!" Etiketsiz bölümler
 ```
 
 Okunuş: "… **on dört otuz** itibarıyla …", "**te be me me** Genel Kurulu'nda …", "… **bir ocak iki bin yirmi yedide**
-yürürlüğe girecek.", "… faizini **yüzde kırk beşte** sabit tuttu." Haber stilinde konuşma dili kapalıdır; "girecek"
-olduğu gibi okunur.
+yürürlüğe girecek.", "… faizini **yüzde kırk beşte** sabit tuttu." Haber stilinde konuşma dili kapalıdır.
 
-## 8. İpuçları
+**Duygu yoğunluğu, geçiş ve gerçek tepki** — stil `duygusal`
 
-- **Model gülmeyi gerçekten üretemez;** `[gülme]` "Hahaha!" olarak seslendirilir. Az kullanın: `[kıkırdama]` çoğu zaman
-  `[kahkaha]`dan doğal durur, gülümseyen bir ton için `[mutlu]` ya da `[samimi]` genellikle yeterlidir. Gerçek bir
-  gülme gerekiyorsa kendi gülmenizi kaydedip montajda ekleyin.
-- **Cümle başına bir duygu.** Tek bir cümlenin duygusunu değiştirmek için kapsamlı etiket kullanın:
-  `[şaşkın: Gerçekten mi?]`. Çok sık duygu değişimi metni küçük parçalara böler ve geçişlerde ton kırılabilir.
-- **Duyguyu metne de yazın.** "Bu harika!" gibi duygu taşıyan sözcükler ve noktalama, etiketten daha çok iş görür.
-- **Sayıları, tarihleri ve kısaltmaları olduğu gibi yazın;** normalizasyon okur ("12,50 TL", "14:30", "KDV"). Yanlış
-  okunan bir marka ya da ad için `DATA_DIR/pronunciations.json` dosyasına `{"Yazılış": "okunuş"}` ekleyin
-  (Docker'da `/data/pronunciations.json`); dosya değişince yeniden başlatma gerekmez.
-- **Bağırmayı büyük harfle değil,** `[kızgın]`, `[vurgulu]` ya da `!` ile verin; tek sözcük vurgusu için `*sözcük*`.
+```
+[biraz üzgün] Sonuçlar açıklandığında kimse konuşmadı. [üzgün+umutlu] Yine de içimden bir ses bitmediğini söylüyordu.
+[hız:0.9] Sonra telefon çaldı. [hız] [aşırı şaşkın] Kazanmışız! Bunu duyunca kahkahayı bastım. [kahkaha]
+[sakinleşerek] Saatlerce sevindik, ağladık, birbirimize sarıldık.
+Gece ilerledikçe ev sessizleşti; çay demlendi, herkes kendi köşesine çekildi.
+Ve ilk kez, uzun zamandır ilk kez, gerçekten rahat bir uyku uyuduk.
+```
+
+Sesin `[kahkaha]` kaydı varsa kendi kahkahanız çalınır, yoksa "Hahahaha!" okunur. Satır sonu paragraf sonu sayılır;
+cümleyi iki satıra bölmeyin.
+
+## 15. Pratik öneriler
+
+- **Gerçek gülme için kayıt alın.** Model gülmeyi gerçekten üretemez; kaydı olmayan `[gülme]` "Hahaha!" diye okunur.
+  En çok kullandığınız 3–4 tepkiyi (gülme, kıkırdama, iç çekme, hmm) kaydetmek en büyük farkı yaratır.
+- **Cümle başına bir duygu.** Tek cümlenin duygusunu değiştirmek için kapsamlı etiket kullanın: `[şaşkın: Gerçekten mi?]`.
+  Çok sık duygu değişimi metni küçük parçalara böler; geçişlerde ton kırılabilir.
+- **Önce yoğunluk, sonra yeni duygu.** "Biraz daha üzgün" için yeni etiket yerine `[üzgün:3]` ya da `[çok üzgün]` deneyin.
+- **Duyguyu metne de yazın.** "Bu harika!" gibi duygu taşıyan sözcükler ve noktalama, etiketten çok iş görür.
+- **Sayıları, tarihleri ve kısaltmaları olduğu gibi yazın;** normalizasyon okur ("12,50 TL", "14:30", "KDV").
+  Yanlış okunan bir marka ya da ad için **Telaffuz** sekmesine ekleyin ya da `{Yazılış|okunuş}` kullanın.
+- **Bağırmayı büyük harfle değil,** `[kızgın]`, `[çok kızgın]` ya da `!` ile verin; tek sözcük için `*sözcük*`.
 - **Uzun boşluk için** çok sayıda nokta yerine `[duraklama]` ya da `[2 sn]` yazın.
-- **Etiket çalışmadı mı?** Yazımı kontrol edin (tanınmayan etiket sessizce atlanır) ve üretim ayrıntılarındaki parça
-  listesine bakın.
+- **Etiket çalışmadı mı?** Yazımı kontrol edin (tanınmayan etiket sessizce atlanır) ve üretim ayrıntılarındaki
+  "Cümle cümle" listesine bakın.

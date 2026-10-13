@@ -324,7 +324,7 @@ def test_spell_acronym(kisaltma, beklenen):
     ("AI", "yapay zeka"), ("IT", "ay ti"), ("HR", "eyç ar"), ("DNA", "de en a"), ("URL", "yu ar el"),
     ("HTML", "eyç ti em el"), ("CPU", "si pi yu"), ("GPU", "ci pi yu"), ("SSD", "es es di"),
     ("HDD", "eyç di di"), ("AVM", "a ve me"), ("GSM", "ge se me"), ("BMW", "be me ve"),
-    ("4K", "dört ka"), ("5G", "beş ce"), ("3D", "üç de"), ("2D", "iki de"), ("MP3", "em pe üç"),
+    ("4K", "dört ka"), ("5G", "beş ge"), ("3D", "üç de"), ("2D", "iki de"), ("MP3", "em pe üç"),
     # sözcük gibi okunanlar (küçük harfe çevrilir)
     ("NATO", "nato"), ("NASA", "nasa"), ("UNICEF", "unisef"), ("UNESCO", "unesko"), ("FIFA", "fifa"),
     ("UEFA", "uefa"), ("TÜBİTAK", "tübitak"), ("ASELSAN", "aselsan"), ("TOKİ", "toki"), ("MEB", "meb"),
@@ -352,7 +352,7 @@ def test_bilinmeyen_kisaltma_kurali(girdi, beklenen):
     ("NATO'ya", "natoya"),
     ("SMS'i", "es em esi"),
     ("ATM'den", "a te meden"),
-    ("5G'ye", "beş ceye"),
+    ("5G'ye", "beş geye"),
 ])
 def test_kisaltma_ekleri(girdi, beklenen):
     kontrol(girdi, beklenen)
