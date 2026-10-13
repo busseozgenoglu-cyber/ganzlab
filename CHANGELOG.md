@@ -3,6 +3,15 @@
 Bu dosyadaki önemli değişiklikler sürüm sürüm listelenir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/)
 düzenine, sürüm numaraları [Anlamsal Sürümleme](https://semver.org/lang/tr/)'ye uyar.
 
+## 4.1.1 — 2026-10-13
+
+### Düzeltildi
+
+- **Duygu etiketleri ayarları eziyordu:** `[heyecanlı]` gibi bir etiketin profili `exaggeration`/`cfg_weight`/`temperature`
+  değerlerini mutlak olarak yazıyordu; her cümlesi etiketli metinde ayar çubukları hiç etki etmiyordu (gerçek modelde
+  0,65 ve 0,85 birebir aynı sesi verdi). Profil artık varsayılan ayara göre bir fark olarak, sizin ayarınızın üstüne
+  eklenir. Varsayılan ayarlarda çıktı değişmez.
+
 ## 4.1.0 — 2026-10-13
 
 "Ölçüm ve ince ayar" sürümü. Gerçek modelde (M2 Pro) Türkçe çıktının tonlama aralığı 13,5 yarım tonda kaldı (Gemini TTS

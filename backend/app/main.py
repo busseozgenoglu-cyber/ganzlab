@@ -37,7 +37,7 @@ from . import lexicon as lex
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("sesklon")
 
-VERSION = "4.1.0"
+VERSION = "4.1.1"
 MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
 PARTIAL_DIR = config.OUTPUT_DIR / "partial"
 PARTIAL_DIR.mkdir(parents=True, exist_ok=True)

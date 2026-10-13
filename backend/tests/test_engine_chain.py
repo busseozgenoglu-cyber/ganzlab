@@ -338,3 +338,26 @@ def test_chain_dialog_turn_pauses_not_overridden(ref_path, tmp_path):
     text2 = "Ayşe: Bir.\nMehmet: [2 sn]\nAyşe: İki."
     _, _, rep5 = eng.synthesize_dialog(text2, {"Ayşe": a, "Mehmet": b}, a, "tr", seed=5, master=False, breaths=False)
     assert rep5["prosody"]["pauses_ms"][0] >= 2000
+
+
+def test_duygu_etiketi_kullanici_ayarini_ezmez():
+    """Her cümlesi etiketli metinde exaggeration/cfg ayarı hâlâ etkili olmalı (profil ayarın üstüne fark olarak eklenir)."""
+    from app.engine import NEUTRAL_SETTINGS
+
+    metin = "[heyecanlı] Selam, bugün harika bir haberim var. [ciddi] Ama önce bir şeyi açıklamam lazım."
+    sonuc = {}
+    for ex in (0.4, 0.8):
+        eng = ChainEngine()
+        eng.synthesize(metin, "tr", None, ex, 0.45, 0.8, 7, 1.0, "light", False, False, False, None, "off",
+                       qc=False, subtitles=False)
+        sonuc[ex] = [c["ex"] for c in eng._tts.calls]
+    assert len(sonuc[0.4]) == len(sonuc[0.8]) >= 2
+    for dusuk, yuksek in zip(sonuc[0.4], sonuc[0.8]):
+        assert yuksek > dusuk + 0.2          # kullanıcının +0,4'ü (sınırlar içinde) korunur
+    # varsayılan ayarda eski davranış aynen: [heyecanlı] = 0,7
+    eng = ChainEngine()
+    eng.synthesize("[heyecanlı] Selam, bugün harika bir haberim var.", "tr", None, NEUTRAL_SETTINGS["exaggeration"],
+                   NEUTRAL_SETTINGS["cfg_weight"], 0.8, 7, 1.0, "light", False, False, False, None, "off",
+                   qc=False, subtitles=False)
+    assert eng._tts.calls[0]["ex"] == pytest.approx(0.7, abs=1e-6)
+    assert eng._tts.calls[0]["cfg"] == pytest.approx(0.35, abs=1e-6)
