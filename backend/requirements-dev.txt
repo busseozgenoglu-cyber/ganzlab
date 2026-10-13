@@ -1,0 +1,9 @@
+# Geliştirme ve test bağımlılıkları (requirements.txt'e EK olarak kurulur; onu içermez):
+#   pip install -r requirements.txt -r requirements-dev.txt
+# Testler sahte motorla çalışır; Chatterbox/PyTorch olmadan kurmak için (CI böyle yapar):
+#   pip install -r <(grep -v chatterbox requirements.txt) -r requirements-dev.txt
+pytest>=8.0
+# FastAPI TestClient için HTTP istemcisi: eski Starlette sürümleri httpx'i, yenileri httpx2'yi kullanır
+# (httpx2 yoksa uyarı verip httpx'e düşer). İkisi birlikte kurulunca her sürümde uyarısız çalışır.
+httpx>=0.27
+httpx2>=2.0

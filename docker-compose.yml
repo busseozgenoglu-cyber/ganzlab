@@ -1,13 +1,26 @@
+# SesKlon — NVIDIA GPU ile çalıştırma.
+#   docker compose up -d --build            → http://localhost:8000
+# Host'ta NVIDIA sürücüsü ve nvidia-container-toolkit kurulu olmalı (Windows: Docker Desktop + WSL2 yeterli).
+# GPU yoksa: docker compose -f docker-compose.cpu.yml up -d --build
+#
+# Ayarlar: proje kökündeki .env dosyası okunur (bkz. .env.example). Değer verilmeyenler aşağıdaki varsayılanları
+# alır; varsayılanlar backend/app/config.py ile aynıdır. Konteyner içi yollar (DATA_DIR=/data, HF_HOME) imajda
+# sabittir: sesler, çıktılar, veritabanı ve model önbelleği "sesklon-data" biriminde kalır.
 services:
   sesklon:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - API_KEY=            # boş = açık; dışarı açacaksan bir anahtar yaz
-      - PRELOAD=1           # modeli açılışta yükle
-      - T3_MODEL=v3
-      # - DEVICE=cpu        # GPU yoksa zorla
+      API_KEY: ${API_KEY:-}                  # boş = açık; dışarı açacaksan bir anahtar yaz
+      DEVICE: ${DEVICE:-}                    # boş = otomatik (cuda varsa cuda)
+      PRELOAD: ${PRELOAD:-1}                 # 1 = modeli açılışta arka planda yükle
+      T3_MODEL: ${T3_MODEL:-v3}
+      MAX_TEXT_CHARS: ${MAX_TEXT_CHARS:-5000}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-60}
+      MAX_OUTPUTS: ${MAX_OUTPUTS:-500}
+      CHUNK_CHARS: ${CHUNK_CHARS:-170}
+      MAX_REF_SECONDS: ${MAX_REF_SECONDS:-15}
     volumes:
       - sesklon-data:/data
     deploy:

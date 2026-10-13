@@ -1,7 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node / arayüz
 node_modules/
 frontend/dist/
+
+# Uygulama verisi: sesler, üretimler, veritabanı, model önbelleği — asla commit etmeyin
 backend/data/
-__pycache__/
-*.pyc
+/data/
+
+# Ortam ve gizli bilgiler
 .env
-.venv/
+.env.*
+!.env.example
+
+# Editör / işletim sistemi
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

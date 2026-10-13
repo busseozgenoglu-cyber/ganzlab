@@ -30,6 +30,19 @@ def to_wav(src: Path, dst: Path, sr: int = TARGET_SR, max_seconds: float | None 
     sf.write(str(dst), y, sr)
 
 
+def resample(wav: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
+    """Örnekleme hızını değiştirir (polyphase; kısa klipler için yeterince hızlı)."""
+    wav = np.asarray(wav, dtype=np.float32).squeeze()
+    if src_sr == dst_sr or wav.size == 0:
+        return wav
+    from math import gcd
+
+    from scipy.signal import resample_poly
+
+    g = gcd(int(src_sr), int(dst_sr))
+    return resample_poly(wav, int(dst_sr) // g, int(src_sr) // g).astype(np.float32)
+
+
 def duration_of(path: Path) -> float:
     info = sf.info(str(path))
     return float(info.frames) / float(info.samplerate)

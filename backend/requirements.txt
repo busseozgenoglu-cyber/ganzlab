@@ -1,3 +1,6 @@
+# SesKlon çalışma zamanı bağımlılıkları. Test araçları: requirements-dev.txt
+# Chatterbox V3 GitHub kaynağından kurulur (PyPI'daki chatterbox-tts V2 ağırlıklarını kullanır); PyTorch onun
+# bağımlılığı olarak gelir. ffmpeg bir pip paketi değildir, sistemde ayrıca kurulu olmalıdır.
 chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git
 fastapi>=0.115
 uvicorn[standard]>=0.30
