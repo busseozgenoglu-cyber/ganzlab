@@ -17,7 +17,7 @@ class FakeEngine(Engine):
     def __init__(self):
         self.device, self.model_name, self._tts = "cpu", "fake", None
         self.loading, self.load_error = False, None
-        self._ref_cache = {}
+        self._ref_cache, self._ltas_cache, self._cps_history, self._default_conds = {}, {}, {}, None
 
     @property
     def loaded(self):
@@ -31,6 +31,7 @@ class FakeEngine(Engine):
 
     def synthesize(self, text, lang, refs, ex, cfg, temp, seed, speed, colloquial, pe, auto, er, progress=None,
                    emotion_fx="off", *, breaths=True, room_tone=True, master=True, pause_scale=1.0,
+                   consistency=True, qc=True, fillers=False, chat_speak=True, subtitles=True, style=None,
                    partial=None, check_cancelled=None):
         chunks = split_text(text, 170, None, auto)
         sr = 24000
@@ -50,7 +51,37 @@ class FakeEngine(Engine):
                "colloquial_level": colloquial, "colloquial_changes": [], "prosody": {"breaths": 0},
                "settings_seen": {"breaths": breaths, "room_tone": room_tone, "master": master, "pause_scale": pause_scale,
                                  "ex": ex, "speed": speed, "colloquial": colloquial, "seed": seed}}
+        if subtitles:
+            rep["timeline"] = [{"index": i, "start": i * 1.0, "end": i * 1.0 + 0.9, "text": c.text, "emotion": c.emotion,
+                                "speaker": None, "words": []} for i, c in enumerate(chunks)]
         return tone, sr, rep
+
+    def synthesize_dialog(self, text, speakers, narrator=None, lang="tr", *, default_emotions=None, progress=None,
+                          partial=None, check_cancelled=None, **opts):
+        from app.dialog import parse_dialog
+        turns = [t for t in parse_dialog(text) if t.text.strip()]
+        sr = 24000
+        t = np.linspace(0, 1, sr)
+        tone = (0.3 * np.sin(2 * np.pi * 440 * t)).astype("float32")
+        names = {}
+        chunks = []
+        for i, tn in enumerate(turns):
+            if check_cancelled:
+                check_cancelled()
+            if progress:
+                progress(i, len(turns), tn.text)
+            r = narrator if tn.speaker is None else speakers.get(tn.speaker, narrator)
+            names[tn.speaker or "Anlatıcı"] = r.name if r and r.name else "Varsayılan ses"
+            chunks.append({"text": tn.text, "emotion": None, "ref": "kayıt" if r else "model", "speaker": tn.speaker,
+                           "duration": 1.0, "pause_ms": 260})
+        rep = {"normalized_text": " ".join(c["text"] for c in chunks), "chunks": chunks, "colloquial_changes": [],
+               "prosody": {"breaths": 0}, "nonverbal_used": [], "dialog": True,
+               "turns": [{"index": tn.index, "speaker": tn.speaker, "voice_name": names[tn.speaker or "Anlatıcı"],
+                          "text": tn.text, "start": i * 1.3, "end": i * 1.3 + 1.0} for i, tn in enumerate(turns)],
+               "speakers": [{"speaker": k, "voice_name": v} for k, v in names.items()],
+               "timeline": [{"index": i, "start": i * 1.3, "end": i * 1.3 + 1.0, "text": tn.text, "emotion": None,
+                             "speaker": tn.speaker, "words": []} for i, tn in enumerate(turns)]}
+        return np.concatenate([tone] * max(1, len(turns))), sr, rep
 
     def convert_voice(self, s, t):
         return np.zeros(24000, dtype="float32"), 24000
@@ -87,7 +118,7 @@ def _add_voice(client, ref_file, name="Test"):
 
 def test_health_catalog(client):
     h = client.get("/api/health").json()
-    assert h["ok"] and h["version"].startswith("3.")
+    assert h["ok"] and h["version"].startswith("4.")
     assert "sohbet" in [s["name"] for s in h["styles"]]
     assert h["colloquial_levels"] == ["off", "light", "full"]
     assert h["features"]["breaths"] and h["features"]["analysis"]
@@ -299,3 +330,122 @@ def test_import_rejects_oversized_member(client, ref_file, monkeypatch):
     r3 = client.post("/api/voices/import", files={"file": ("z.zip", bad.getvalue(), "application/zip")})
     assert r3.status_code == 400
     assert all(v["name"] != "x" for v in client.get("/api/voices").json())   # yarım kayıt kalmadı
+
+
+# ---------- v4: diyalog, gerçek tepkiler, iyileştirme, sözlük, altyazı ----------
+
+def _laugh_file(tmp_path):
+    """Sentetik gülme: 3 kısa darbe, bant geçiren gürültü + 180 Hz ton."""
+    sr = 24000
+    rng = np.random.default_rng(3)
+    parts = []
+    for _ in range(3):
+        n = int(sr * 0.22)
+        t = np.linspace(0, 0.22, n, endpoint=False)
+        env = np.hanning(n)
+        parts.append(((0.25 * np.sin(2 * np.pi * 180 * t) + rng.standard_normal(n) * 0.08) * env).astype("float32"))
+        parts.append(np.zeros(int(sr * 0.06), dtype="float32"))
+    p = tmp_path / "gulme.wav"
+    sf.write(str(p), np.concatenate(parts), sr)
+    return p
+
+
+def test_dialog_generation(client, ref_file):
+    a = _add_voice(client, ref_file, "Ayşe Sesi")
+    m = _add_voice(client, ref_file, "Mehmet Sesi")
+    text = "İkisi kafede oturuyordu.\nAyşe: Selam, naber?\nMehmet: [yorgun] İyiyim ya, sen?\nAyşe: Ben de iyiyim."
+    r = client.post("/api/tts", json={"text": text, "speakers": {"Ayşe": a["id"], "Mehmet": m["id"]},
+                                      "narrator_voice_id": a["id"], "speaker_emotions": {"Mehmet": "sıkılmış"}, "wait": True})
+    assert r.status_code == 200, r.text
+    p = r.json()["params"]
+    assert p["dialog"] is True and len(p["turns"]) == 4
+    assert [t["speaker"] for t in p["turns"]] == [None, "Ayşe", "Mehmet", "Ayşe"]
+    assert p["turns"][1]["voice_name"] == "Ayşe Sesi" and p["turns"][2]["voice_name"] == "Mehmet Sesi"
+    assert p["turns"][0]["voice_name"] == "Ayşe Sesi"      # anlatıcı = narrator_voice_id
+    assert "Ayşe Sesi" in r.json()["voice_name"] and "Mehmet Sesi" in r.json()["voice_name"]
+    gid = r.json()["id"]
+    srt = client.get(f"/api/generations/{gid}/subtitles?format=srt")
+    assert srt.status_code == 200 and "-->" in srt.text and "Selam" in srt.text
+    assert client.get(f"/api/generations/{gid}/subtitles?format=vtt").text.startswith("WEBVTT")
+    assert client.get(f"/api/generations/{gid}/subtitles?format=xyz").status_code == 400
+    # konuşmacı yok → 400
+    assert client.post("/api/tts", json={"text": "Düz bir metin.", "speakers": {}}).status_code == 400
+
+
+def test_nonverbal_recordings(client, ref_file, tmp_path):
+    v = _add_voice(client, ref_file, "Buse")
+    vid = v["id"]
+    laugh = _laugh_file(tmp_path)
+    r = client.post(f"/api/voices/{vid}/nonverbal", data={"tag": "laughs"},
+                    files={"file": ("gulme.wav", laugh.read_bytes(), "audio/wav")})
+    assert r.status_code == 200, r.text
+    samples = r.json()["samples"]
+    assert [s for s in samples if s["kind"] == "nonverbal"][0]["emotion"] == "gülme"
+    assert client.get(f"/api/voices/{vid}").json()["samples"][0]["kind"] == "nonverbal"
+    # kataloğa göre geçersiz etiket
+    assert client.post(f"/api/voices/{vid}/nonverbal", data={"tag": "yok"},
+                       files={"file": ("x.wav", laugh.read_bytes(), "audio/wav")}).status_code == 400
+    # çok kısa kayıt
+    short = tmp_path / "kisa.wav"
+    sf.write(str(short), np.zeros(1200, dtype="float32"), 24000)
+    assert client.post(f"/api/voices/{vid}/nonverbal", data={"tag": "gülme"},
+                       files={"file": ("k.wav", short.read_bytes(), "audio/wav")}).status_code == 400
+    # dışa aktarma tepkiyi de taşır, içe aktarma geri getirir
+    z = client.get(f"/api/voices/{vid}/export")
+    imp = client.post("/api/voices/import", files={"file": ("y.zip", z.content, "application/zip")}).json()
+    assert any(s["kind"] == "nonverbal" and s["emotion"] == "gülme" for s in imp["samples"])
+    assert client.delete(f"/api/voices/{vid}/nonverbal/gülme").status_code == 200
+    assert client.get(f"/api/voices/{vid}").json()["samples"] == []
+    h = client.get("/api/health").json()
+    assert any(x["key"] == "gülme" for x in h["tags"]["nonverbal_recordable"]) and h["features"]["nonverbal"]
+
+
+def test_enhance_and_undo(client, tmp_path):
+    # gürültülü referans
+    sr = 24000
+    rng = np.random.default_rng(5)
+    t = np.linspace(0, 8, sr * 8)
+    wav = (0.2 * np.sin(2 * np.pi * 220 * t) * (0.5 + 0.5 * np.sin(2 * np.pi * 4 * t) ** 2)).astype("float32")
+    wav += (rng.standard_normal(len(wav)) * 0.02).astype("float32")
+    p = tmp_path / "noisy.wav"
+    sf.write(str(p), wav, sr)
+    v = _add_voice(client, p, "Gürültülü")
+    vid = v["id"]
+    r = client.post(f"/api/voices/{vid}/enhance", data={"force": "true"})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["applied"] is True and "before" in out and "after" in out and out["voice"]["enhanced"] is True
+    assert (out["after"]["snr_db"] or 0) >= (out["before"]["snr_db"] or 0)
+    r2 = client.post(f"/api/voices/{vid}/enhance/undo")
+    assert r2.status_code == 200 and r2.json()["voice"]["enhanced"] is False
+    assert client.post(f"/api/voices/{vid}/enhance/undo").status_code == 400
+
+
+def test_lexicon_endpoints(client, ref_file):
+    vid = _add_voice(client, ref_file)["id"]
+    assert client.get("/api/lexicon").json() == []
+    r = client.put("/api/lexicon", json={"word": "Fumor", "reading": "Fumor"})
+    assert r.status_code == 200
+    client.put("/api/lexicon", json={"word": "Shopify", "reading": "Şopifay"})
+    client.put("/api/lexicon", json={"word": "Shopify", "reading": "Şopifayy", "voice_id": vid})
+    entries = client.get(f"/api/lexicon?voice_id={vid}").json()
+    assert any(e["word"] == "Shopify" and e["scope"] == "voice" for e in entries)
+    t = client.post("/api/lexicon/test", json={"text": "tmm, Shopify mağazası {Claude|Klod} ile 12:30'da açılacak", "voice_id": vid}).json()
+    assert "Şopifayy" in t["normalized"] and "tamam" in t["normalized"] and "Klod" in t["normalized"]
+    assert "on iki otuzda" in t["normalized"] and "açılıcak" in t["normalized"]
+    assert client.delete(f"/api/lexicon?word=Shopify&voice_id={vid}").json()["ok"]
+    assert client.delete("/api/lexicon?word=yokboyle").status_code == 404
+    assert client.get("/api/lexicon?voice_id=yok").status_code == 404
+    # sözlük üretime de uygulanır
+    r = client.post("/api/tts", json={"text": "Shopify harika.", "voice_id": vid, "wait": True})
+    assert r.status_code == 200
+
+
+def test_v4_settings_roundtrip(client, ref_file):
+    vid = _add_voice(client, ref_file)["id"]
+    r = client.post("/api/tts", json={"text": "Deneme.", "voice_id": vid, "wait": True,
+                                      "consistency": False, "qc": False, "fillers": True, "chat_speak": False, "subtitles": False})
+    p = r.json()["params"]
+    assert p["consistency"] is False and p["qc"] is False and p["fillers"] is True and p["chat_speak"] is False
+    assert p["timeline"] is None or p["timeline"] == []
+    assert client.get(f"/api/generations/{r.json()['id']}/subtitles").status_code == 404

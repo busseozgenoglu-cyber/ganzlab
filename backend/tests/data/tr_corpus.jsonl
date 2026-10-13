@@ -1,0 +1,203 @@
+{"text": "Fiyatı 12,50 TL.", "expect": ["on iki lira elli kuruş"], "reject": ["virgül", "re:\\bTL\\b"], "note": "para: lira ve kuruş ayrı okunur"}
+{"text": "Toplam ₺1.250 ödedim.", "expect": ["bin iki yüz elli lira"], "reject": ["nokta", "bir bin", "₺"], "note": "para: ₺ öneki, binlik ayraçlı tutar"}
+{"text": "Tutar 1.250,75 TL oldu.", "expect": ["bin iki yüz elli lira yetmiş beş kuruş"], "reject": ["virgül", "nokta"], "note": "para: binlik + kuruşlu tutar"}
+{"text": "Kahve 45 TL'ye çıkmış.", "expect": ["kırk beş liraya"], "reject": ["re:\\bTL", "lirası"], "note": "para: kesmeli ek liraya bitişir"}
+{"text": "Bilet 0,50 TL oldu.", "expect": ["elli kuruş"], "reject": ["sıfır lira", "virgül"], "note": "para: yalnız kuruş — sıfır lira söylenmez"}
+{"text": "€20,30 ödedim.", "expect": ["yirmi euro otuz sent"], "reject": ["€"], "note": "para: euro ve sent"}
+{"text": "$100 bozdurdum.", "expect": ["yüz dolar"], "reject": ["$", "bir yüz"], "note": "para: $ öneki"}
+{"text": "Maaşı 1,5 milyon TL.", "expect": ["bir buçuk milyon lira"], "reject": ["kuruş", "virgül"], "note": "para: ölçekli tutar kuruşsuz okunur"}
+{"text": "50 bin TL'lik araba aldı.", "expect": ["elli bin liralık"], "reject": ["re:\\bTL"], "note": "para: yazıyla ölçek + -lik eki"}
+{"text": "Dolar 34,25 TL'yi gördü.", "expect": ["otuz dört lira yirmi beş kuruşu"], "reject": ["virgül"], "note": "para: kuruşlu tutara kesmeli ek"}
+{"text": "Hesap 99,99 TL tuttu.", "expect": ["doksan dokuz virgül doksan dokuz lira"], "reject": ["kuruş"], "note": "para: fiyat etiketi istisnası (tamı 9 ile biten ,90/,95/,99 virgülle okunur — bilinçli tasarım)"}
+{"text": "Ürün 20 €'ya satılıyor.", "expect": ["yirmi euroya"], "reject": ["€"], "note": "para: sembol sonrası kesmeli ek"}
+{"text": "Enflasyon %64,77 oldu.", "expect": ["yüzde altmış dört virgül yetmiş yedi"], "reject": ["%"], "note": "yüzde: ondalıklı yüzde"}
+{"text": "%20 indirim var.", "expect": ["yüzde yirmi indirim"], "reject": ["%"], "note": "yüzde: öndeki % işareti"}
+{"text": "Malın %50'si gitti.", "expect": ["yüzde ellisi"], "reject": ["%"], "note": "yüzde: kesmeli iyelik eki"}
+{"text": "Oran %12,5'e çıktı.", "expect": ["yüzde on iki buçuğa"], "reject": ["buçuka"], "note": "yüzde: buçuk + ünlü ile başlayan ek (k→ğ yumuşaması)"}
+{"text": "Faiz %2,5'i geçmez.", "expect": ["yüzde iki buçuğu"], "reject": ["buçuku"], "note": "yüzde: buçuk + belirtme eki (k→ğ yumuşaması)"}
+{"text": "Katılım %50-60 arası.", "expect": ["yüzde elli altmış arası"], "reject": ["eksi"], "note": "yüzde: yakın aralık boşlukla okunur"}
+{"text": "Faiz %0,5 arttı.", "expect": ["yüzde sıfır virgül beş"], "reject": ["buçuk"], "note": "yüzde: sıfırlı ondalık buçukla okunmaz"}
+{"text": "Toplantı 14:30'da başlıyor.", "expect": ["on dört otuzda"], "reject": ["iki nokta"], "note": "saat: iki noktalı saat + bulunma eki"}
+{"text": "Saat 9.30'da buluşalım.", "expect": ["saat dokuz otuzda"], "reject": ["nokta", "virgül"], "note": "saat: 'saat 9.30' noktalı biçim"}
+{"text": "Saat 09:05'te alarm çaldı.", "expect": ["dokuz sıfır beşte"], "reject": ["sıfır dokuz"], "note": "saat: baştaki sıfır okunmaz, dakika 05"}
+{"text": "Mesai 09:00-18:00 arası.", "expect": ["dokuz, on sekiz arası"], "reject": ["sıfır sıfır"], "note": "saat: saat aralığı, tam saatte dakika söylenmez"}
+{"text": "Tren 23:45'te kalkar.", "expect": ["yirmi üç kırk beşte"], "reject": [], "note": "saat: gece saati + -te"}
+{"text": "Saat 12:00'de öğle arası.", "expect": ["saat on ikide"], "reject": ["sıfır"], "note": "saat: tam saat + ek"}
+{"text": "Saat 14.30 gibi uğra.", "expect": ["on dört otuz gibi"], "reject": ["nokta"], "note": "saat: eksiz noktalı saat"}
+{"text": "Saat 10.05'te geldi.", "expect": ["saat on sıfır beşte"], "reject": ["mayıs", "nokta"], "note": "saat: 10.05 tarih (10 Mayıs) sanılmaz"}
+{"text": "12.10.2026 tarihinde başvurdum.", "expect": ["on iki ekim iki bin yirmi altı tarihinde"], "reject": ["nokta"], "note": "tarih: noktalı tam tarih"}
+{"text": "Teslim tarihi 12/10/2026.", "expect": ["on iki ekim iki bin yirmi altı"], "reject": ["bölü"], "note": "tarih: eğik çizgili tarih"}
+{"text": "Kayıt 2026-10-12 günü açıldı.", "expect": ["on iki ekim iki bin yirmi altı günü"], "reject": ["eksi", "tire"], "note": "tarih: ISO biçimi"}
+{"text": "2024'te mezun oldum.", "expect": ["iki bin yirmi dörtte"], "reject": ["dördte", "dörtde"], "note": "tarih: yıl + kesmeli ek (ünsüz benzeşmesi)"}
+{"text": "1990'larda çocuktum.", "expect": ["bin dokuz yüz doksanlarda"], "reject": [], "note": "tarih: on yıl + çoğul eki"}
+{"text": "Cumhuriyet 29 Ekim 1923'te ilan edildi.", "expect": ["yirmi dokuz ekim bin dokuz yüz yirmi üçte"], "reject": [], "note": "tarih: yazıyla ay + yıl eki"}
+{"text": "Son gün 31/12/2024'te doldu.", "expect": ["otuz bir aralık iki bin yirmi dörtte"], "reject": ["bölü"], "note": "tarih: eğik çizgili tarih + ek"}
+{"text": "1453'te İstanbul fethedildi.", "expect": ["bin dört yüz elli üçte"], "reject": ["bir bin"], "note": "tarih: tarihî yıl"}
+{"text": "2000'li yıllar güzeldi.", "expect": ["iki binli yıllar"], "reject": [], "note": "tarih: -li eki"}
+{"text": "0532 123 45 67 numarasını ara.", "expect": ["sıfır beş yüz otuz iki, yüz yirmi üç, kırk beş, altmış yedi"], "reject": ["milyon"], "note": "telefon: cep numarası öbek öbek"}
+{"text": "Bize +90 (212) 555 12 34 numarasından ulaşın.", "expect": ["artı doksan, iki yüz on iki, beş yüz elli beş, on iki, otuz dört"], "reject": ["parantez"], "note": "telefon: ülke kodu ve parantezli alan kodu"}
+{"text": "444 0 444 çağrı merkezini aradım.", "expect": ["dört yüz kırk dört, sıfır, dört yüz kırk dört"], "reject": [], "note": "telefon: 444'lü çağrı merkezi"}
+{"text": "Numaram 05321234567.", "expect": ["sıfır beş yüz otuz iki, yüz yirmi üç, kırk beş, altmış yedi"], "reject": ["milyar", "milyon"], "note": "telefon: bitişik 11 hane sayı gibi okunmaz"}
+{"text": "0850 222 00 00 numaralı hattı arayın.", "expect": ["sıfır sekiz yüz elli, iki yüz yirmi iki, sıfır sıfır, sıfır sıfır"], "reject": [], "note": "telefon: 0850 hattı ve çift sıfırlar"}
+{"text": "ABD'de yaşıyor.", "expect": ["a be dede"], "reject": ["abd"], "note": "kısaltma: harf harf + kesmeli ek"}
+{"text": "Fiyatlara KDV dahil.", "expect": ["ka de ve dahil"], "reject": ["kdv"], "note": "kısaltma: KDV harf harf"}
+{"text": "TBMM'de görüşüldü.", "expect": ["te be me mede"], "reject": ["tbmm"], "note": "kısaltma: TBMM harf harf + ek"}
+{"text": "SGK'ya başvurdum.", "expect": ["se ge kaya"], "reject": ["sgk"], "note": "kısaltma: SGK + yönelme eki"}
+{"text": "PDF dosyasını gönder.", "expect": ["pe de fe dosyasını"], "reject": ["pdf"], "note": "kısaltma: PDF Türkçe harf adlarıyla"}
+{"text": "USB bellek taktım.", "expect": ["yu es bi bellek"], "reject": ["usb"], "note": "kısaltma: USB yerleşik İngilizce söyleyiş"}
+{"text": "SMS ile kod geldi.", "expect": ["es em es"], "reject": ["sms"], "note": "kısaltma: SMS (ile → -le birleşir)"}
+{"text": "CV'mi gönderdim.", "expect": ["si vimi"], "reject": ["cv"], "note": "kısaltma: CV + iyelik eki"}
+{"text": "AVM'de buluşalım.", "expect": ["a ve mede"], "reject": ["avm"], "note": "kısaltma: AVM + bulunma eki"}
+{"text": "İBB'nin otobüsü geldi.", "expect": ["i be benin"], "reject": ["ı be"], "note": "kısaltma: İ ile başlayan kısaltma"}
+{"text": "TSK açıklama yaptı.", "expect": ["te se ka"], "reject": ["teşekkür"], "note": "kısaltma: büyük harfli kurum adı sohbet kısaltması sanılmaz"}
+{"text": "NATO zirvesi başladı.", "expect": ["nato zirvesi"], "reject": ["ne a te"], "note": "kısaltma: NATO sözcük gibi"}
+{"text": "NASA'nın aracı Mars'a indi.", "expect": ["nasanın aracı"], "reject": ["ne a se"], "note": "kısaltma: NASA sözcük gibi + ek"}
+{"text": "TÜBİTAK desteği aldık.", "expect": ["tübitak desteği"], "reject": ["te ü be"], "note": "kısaltma: TÜBİTAK sözcük gibi"}
+{"text": "UNESCO listesine girdi.", "expect": ["unesko listesine"], "reject": [], "note": "kısaltma: UNESCO okunuşu"}
+{"text": "ODTÜ mezunuyum.", "expect": ["odtü mezunuyum"], "reject": ["o de te"], "note": "kısaltma: ODTÜ sözcük gibi"}
+{"text": "II. Dünya Savaşı 1939'da başladı.", "expect": ["ikinci dünya savaşı", "bin dokuz yüz otuz dokuzda"], "reject": ["ıı"], "note": "roma: sıra sayısı + yıl eki"}
+{"text": "XIX. yüzyılda yaşadı.", "expect": ["on dokuzuncu yüzyılda"], "reject": ["xıx"], "note": "roma: XIX. yüzyıl"}
+{"text": "Bölüm IV başlıyor.", "expect": ["bölüm dört başlıyor"], "reject": ["ıv"], "note": "roma: noktasız Roma rakamı asıl sayı"}
+{"text": "III. Selim yenilikçiydi.", "expect": ["üçüncü selim"], "reject": ["ııı"], "note": "roma: hükümdar sırası"}
+{"text": "IV. Murat dönemi.", "expect": ["dördüncü murat"], "reject": [], "note": "roma: IV. → dördüncü"}
+{"text": "2. Dünya Savaşı çok uzun sürdü.", "expect": ["ikinci dünya savaşı"], "reject": ["iki. dünya"], "note": "sıra: büyük harfli sözcükten önceki '2.' sıra sayısı"}
+{"text": "5+3=8 eder.", "expect": ["beş artı üç eşittir sekiz"], "reject": ["+", "="], "note": "matematik: toplama ve eşittir"}
+{"text": "3-4 kişi geldi.", "expect": ["üç dört kişi"], "reject": ["eksi"], "note": "aralık: yakın küçük sayılar boşlukla"}
+{"text": "2010-2015 yılları arasında çalıştım.", "expect": ["iki bin on, iki bin on beş yılları"], "reject": ["eksi"], "note": "aralık: yıl aralığı virgül duraklamasıyla"}
+{"text": "Masa 10x20 cm.", "expect": ["on çarpı yirmi santimetre"], "reject": ["iks"], "note": "matematik: boyut çarpımı + birim"}
+{"text": "Pastanın 3/4'ü bitti.", "expect": ["dörtte üçü"], "reject": ["bölü"], "note": "matematik: kesir + ek"}
+{"text": "Pastanın 1/4'ü kaldı.", "expect": ["çeyreği kaldı"], "reject": ["çeyreki"], "note": "matematik: çeyrek + ünlüyle başlayan ek (k→ğ)"}
+{"text": "Hava -5 derece.", "expect": ["eksi beş derece"], "reject": [], "note": "matematik: negatif sayı"}
+{"text": "Maç 3:1 bitti.", "expect": ["üçe bir"], "reject": ["bölü"], "note": "matematik: skor / oran"}
+{"text": "10-15 dakika bekle.", "expect": ["on on beş dakika"], "reject": ["eksi"], "note": "aralık: on on beş"}
+{"text": "100-200 kişi gelir.", "expect": ["yüz, iki yüz kişi"], "reject": ["eksi"], "note": "aralık: büyük sayılar virgülle"}
+{"text": "5 > 3 doğru.", "expect": ["beş büyüktür üç"], "reject": [">"], "note": "matematik: karşılaştırma"}
+{"text": "5 km yürüdüm.", "expect": ["beş kilometre"], "reject": ["km"], "note": "birim: km"}
+{"text": "2,5 kg elma aldım.", "expect": ["iki buçuk kilogram"], "reject": ["virgül", "kg"], "note": "birim: kg + buçuk"}
+{"text": "Hava 25°C olacak.", "expect": ["yirmi beş derece olucak"], "reject": ["°"], "note": "birim: °C (+ olacak → olucak)"}
+{"text": "Ayda 300 kWh harcıyoruz.", "expect": ["üç yüz kilovatsaat"], "reject": ["kwh"], "note": "birim: kWh"}
+{"text": "5000 mAh batarya var.", "expect": ["beş bin miliamper saat"], "reject": ["mah"], "note": "birim: mAh"}
+{"text": "120 m² daire satılık.", "expect": ["yüz yirmi metrekare"], "reject": ["²"], "note": "birim: m²"}
+{"text": "Araç 100 km/s hıza çıktı.", "expect": ["yüz kilometre saat"], "reject": ["bölü"], "note": "birim: km/s hız"}
+{"text": "Su 100 °C'de kaynar.", "expect": ["yüz derecede kaynar"], "reject": ["°"], "note": "birim: derece + ek"}
+{"text": "Dosya 3 GB tutuyor.", "expect": ["üç gigabayt"], "reject": ["gb"], "note": "birim: GB"}
+{"text": "10 kg'lık çuval.", "expect": ["on kilogramlık"], "reject": ["kg"], "note": "birim: birim + -lık eki"}
+{"text": "YouTube'da izledim.", "expect": ["yutubda"], "reject": ["youtube"], "note": "marka: YouTube + ek"}
+{"text": "Instagram hesabım açık.", "expect": ["instagram hesabım"], "reject": ["ınstagram"], "note": "marka: Instagram İ ile"}
+{"text": "INSTAGRAM'da paylaştım.", "expect": ["instagramda"], "reject": ["ınstagram"], "note": "marka: büyük harfli yazım (I → i)"}
+{"text": "iPhone 15 aldım.", "expect": ["ayfon on beş"], "reject": ["iphone"], "note": "marka: iPhone + model numarası"}
+{"text": "ChatGPT'ye sordum.", "expect": ["çet cipitiye"], "reject": ["chatgpt"], "note": "marka: ChatGPT + ek"}
+{"text": "Netflix dizisi izledik.", "expect": ["netfliks dizisi"], "reject": ["netflix"], "note": "marka: Netflix"}
+{"text": "Trendyol'dan sipariş verdim.", "expect": ["trendyol'dan sipariş"], "reject": ["te re"], "note": "marka: Türkçe okunan marka korunur"}
+{"text": "WhatsApp grubundan çıktım.", "expect": ["vatsap grubundan"], "reject": ["whatsapp"], "note": "marka: WhatsApp"}
+{"text": "iPhone'umu kaybettim.", "expect": ["ayfonumu"], "reject": ["iphone"], "note": "marka: iPhone + iyelik eki"}
+{"text": "Spotify'da dinledim.", "expect": ["spotifayda"], "reject": ["spotify"], "note": "marka: Spotify + ek"}
+{"text": "www.sesklon.com adresine gir.", "expect": ["sesklon nokta com adresine"], "reject": ["www"], "note": "url: www'li adres"}
+{"text": "info@firma.com.tr adresine yaz.", "expect": ["info et firma nokta com nokta te re"], "reject": ["@"], "note": "e-posta: .com.tr"}
+{"text": "Detaylar sesklon.app/yardim sayfasında.", "expect": ["sesklon nokta ep bölü yardim"], "reject": ["/"], "note": "url: yol (bölü)"}
+{"text": "Sitemiz sesklon.com.", "expect": ["sitemiz sesklon nokta com"], "reject": ["re:nokta\\W*$"], "note": "url: cümle sonundaki nokta 'nokta' diye okunmaz"}
+{"text": "Mail adresim ali.veli@gmail.com.", "expect": ["ali nokta veli et"], "reject": ["@"], "note": "e-posta: noktalı yerel kısım"}
+{"text": "3. sınıfa gidiyor.", "expect": ["üçüncü sınıfa"], "reject": ["üç."], "note": "sıra: '3. sınıf'"}
+{"text": "Yarışmada 1'inci oldu.", "expect": ["birinci oldu"], "reject": ["bir inci"], "note": "sıra: kesmeli sıra eki"}
+{"text": "21. yüzyıl teknolojisi.", "expect": ["yirmi birinci yüzyıl"], "reject": [], "note": "sıra: bileşik sıra sayısı"}
+{"text": "Adres: Gül Sok. No: 7 D. 5", "expect": ["gül sokak numara yedi daire beş"], "reject": ["nokta"], "note": "sıra/kısaltma: adres kısaltmaları"}
+{"text": "6. kattayım.", "expect": ["altıncı kattayım"], "reject": [], "note": "sıra: '6. kat'"}
+{"text": "2'nci sırada.", "expect": ["ikinci sırada"], "reject": [], "note": "sıra: -nci eki"}
+{"text": "2,5 saat sürdü.", "expect": ["iki buçuk saat"], "reject": ["virgül"], "note": "ondalık: ,5 → buçuk"}
+{"text": "Not ortalamam 3,75.", "expect": ["üç virgül yetmiş beş"], "reject": ["buçuk"], "note": "ondalık: virgüllü okuma"}
+{"text": "Sınavdan 0,5 puan kaybettim.", "expect": ["sıfır virgül beş puan"], "reject": ["buçuk"], "note": "ondalık: sıfır buçuk değil"}
+{"text": "3.5 puan aldı.", "expect": ["üç buçuk puan"], "reject": ["nokta"], "note": "ondalık: noktalı yazım da buçuk"}
+{"text": "1.250.000 kişi katıldı.", "expect": ["bir milyon iki yüz elli bin kişi"], "reject": ["nokta"], "note": "ondalık/binlik: binlik ayraçlar okunmaz"}
+{"text": "Yarın geleceğim.", "expect": ["yarın gelicem"], "reject": ["geleceğim"], "note": "konuşma: gelecek zaman kısaltması"}
+{"text": "Sana bir şey söyleyeceğim.", "expect": ["bişey söyliycem"], "reject": ["bir şey"], "note": "konuşma: bişey + söyliycem"}
+{"text": "Ne yapacağız şimdi?", "expect": ["napıcaz şimdi"], "reject": ["ne yapıcaz"], "note": "konuşma: ne + yapacağız → napıcaz"}
+{"text": "Ne yapacağım şimdi?", "expect": ["napıcam şimdi"], "reject": ["ne yapıcam"], "note": "konuşma: ne + yapacağım → napıcam"}
+{"text": "Ne yapacaksın yarın?", "expect": ["napıcaksın yarın"], "reject": ["ne yapıcaksın"], "note": "konuşma: ne + yapacaksın → napıcaksın"}
+{"text": "Güzel olmuş değil mi?", "expect": ["olmuş di mi"], "reject": ["değil mi"], "note": "konuşma: değil mi → di mi"}
+{"text": "Hiçbir şey yapmayacağım.", "expect": ["hiçbişey yapmıycam"], "reject": [], "note": "konuşma: hiçbişey + olumsuz gelecek"}
+{"text": "Ne oldu sana?", "expect": ["noldu sana"], "reject": ["ne oldu"], "note": "konuşma: ne oldu → noldu"}
+{"text": "Bir dakika bekle.", "expect": ["bi dakka bekle"], "reject": ["bir dakika"], "note": "konuşma: bi dakka"}
+{"text": "Ne olacak bu işin sonu?", "expect": ["nolucak bu işin"], "reject": [], "note": "konuşma: ne olacak → nolucak"}
+{"text": "Bunu kalem ile yazdım.", "expect": ["kalemle yazdım"], "reject": ["kalem ile"], "note": "konuşma: ile → -le"}
+{"text": "Dün Ayşe ile gittim.", "expect": ["ayşe'yle gittim"], "reject": ["ayşe ile"], "note": "konuşma: özel ad + ile → kesmeli -yle"}
+{"text": "Herhalde gelir.", "expect": ["heralde gelir"], "reject": [], "note": "konuşma: herhalde → heralde"}
+{"text": "Gelecek Partisi seçime girecek.", "expect": ["gelecek partisi", "giricek"], "reject": ["gelicek partisi"], "note": "özel ad: parti adı korunur, fiil kısalır"}
+{"text": "Ahmet Gelecek bugün geldi.", "expect": ["ahmet gelecek bugün"], "reject": ["gelicek"], "note": "özel ad: soyadı Gelecek korunur"}
+{"text": "Bugün Gelecek Partisi'ne üye oldum.", "expect": ["gelecek partisi'ne"], "reject": ["gelicek"], "note": "özel ad: kesmeli özel ad korunur"}
+{"text": "Yiyecek içecek getirdik.", "expect": ["yiyecek içecek getirdik"], "reject": ["yiyicek", "içicek"], "note": "isim -ecek: yiyecek içecek"}
+{"text": "Kışlık yakacak aldık.", "expect": ["kışlık yakacak"], "reject": ["yakıcak"], "note": "isim -ecek: yakacak (yakıt)"}
+{"text": "Gelecek hafta görüşürüz.", "expect": ["gelecek hafta"], "reject": ["gelicek"], "note": "isim -ecek: gelecek hafta (sıfat)"}
+{"text": "Geleceğimizi düşünüyoruz.", "expect": ["geleceğimizi düşünüyoruz"], "reject": ["gelicez"], "note": "isim -ecek: geleceğimiz (istikbal)"}
+{"text": "Benim geleceğim parlak.", "expect": ["geleceğim parlak"], "reject": ["gelicem"], "note": "isim -ecek: benim geleceğim"}
+{"text": "Su içecek misin?", "expect": ["su içicek misin"], "reject": ["içecek misin"], "note": "isim -ecek kontrol: soru ekiyle fiil"}
+{"text": "tmm yrn grs", "expect": ["tamam yarın görüşürüz"], "reject": ["tmm", "grs"], "note": "sohbet: tmm / yrn / grs"}
+{"text": "slm nbr", "expect": ["selam naber"], "reject": ["slm", "nbr"], "note": "sohbet: slm / nbr"}
+{"text": "kib knk", "expect": ["kendine iyi bak kanka"], "reject": ["kib"], "note": "sohbet: kib / knk"}
+{"text": "Tmm abi, tşk.", "expect": ["tamam abi, teşekkürler"], "reject": ["tşk"], "note": "sohbet: büyük harf korunur (Tmm → Tamam)"}
+{"text": "sa", "expect": ["selamün aleyküm"], "reject": [], "note": "sohbet: tek başına sa"}
+{"text": "as, iyiyim", "expect": ["aleyküm selam, iyiyim"], "reject": [], "note": "sohbet: satır başında as + noktalama"}
+{"text": "iyi gcl", "expect": ["iyi geceler"], "reject": ["gcl"], "note": "sohbet: iki sözcüklü kısaltma"}
+{"text": "ok", "expect": ["okey"], "reject": [], "note": "sohbet: tek başına ok"}
+{"text": "ok ve yay aldım.", "expect": ["ok ve yay"], "reject": ["okey"], "note": "sohbet: cümle içindeki ok sözcüktür (ok-yay)"}
+{"text": "Kasa önünde bekledi.", "expect": ["kasa önünde"], "reject": ["selamün", "aleyküm"], "note": "sohbet: sözcük içindeki 'sa' açılmaz"}
+{"text": "Bu sa kelimesi garip.", "expect": ["bu sa kelimesi"], "reject": ["selamün"], "note": "sohbet: cümle ortasındaki sa açılmaz"}
+{"text": "As oyuncu sakatlandı.", "expect": ["as oyuncu"], "reject": ["aleyküm"], "note": "sohbet: 'as oyuncu' selam değil"}
+{"text": "tlf'u aç", "expect": ["telefonu aç"], "reject": ["tlf"], "note": "sohbet: kısaltma + kesmeli ek bitişir"}
+{"text": "msj atarım, tşk ederim", "expect": ["mesaj atarım", "teşekkür ederim"], "reject": ["teşekkürler ederim"], "note": "sohbet: en uzun kalıp önce (tşk ederim)"}
+{"text": "tmm 14:30'da grs", "expect": ["tamam on dört otuzda görüşürüz"], "reject": [], "note": "sohbet + saat birlikte"}
+{"text": "{Claude|Klod} çok akıllı.", "expect": ["klod çok akıllı"], "reject": ["claude"], "note": "satır içi: {yazılış|okunuş}"}
+{"text": "{Nietzsche|Niçe} okudum.", "expect": ["niçe okudum"], "reject": ["nietzsche"], "note": "satır içi: yabancı özel ad"}
+{"text": "[gülerek] {Hello|Helo} dedi.", "expect": ["helo dedi"], "reject": ["hello", "gülerek"], "note": "satır içi: etiketle birlikte"}
+{"text": "{GIF|cif} mi {GIF|gif} mi?", "expect": ["cif mi gif mi"], "reject": ["gıf"], "note": "satır içi: aynı yazılışa iki okunuş"}
+{"text": "slm {Claude|Klod}, nbr?", "expect": ["selam klod, naber"], "reject": [], "note": "satır içi + sohbet kısaltması"}
+{"text": "Harika bir gün 😊🎉", "expect": ["harika bi gün"], "reject": [], "note": "emoji: sondaki emojiler silinir"}
+{"text": "Seni seviyorum ❤️", "expect": ["seni seviyorum"], "reject": ["❤"], "note": "emoji: kalp ve varyasyon seçici"}
+{"text": "selam :) Bugün geldim", "expect": ["selam. bugün geldim"], "reject": [":)"], "note": "emoji: emotikon cümle sonu yerine"}
+{"text": "Türkiye 🇹🇷 kazandı.", "expect": ["türkiye kazandı"], "reject": [], "note": "emoji: bayrak"}
+{"text": "Tamam 👍 geliyorum", "expect": ["tamam geliyorum"], "reject": [], "note": "emoji: cümle içi emoji"}
+{"text": "İnanılmaz!!!", "expect": ["inanılmaz!"], "reject": ["!!"], "note": "noktalama: çoklu ünlem teke iner"}
+{"text": "Ne?!?!", "expect": ["ne?"], "reject": ["!"], "note": "noktalama: ?! karışımı soru olur"}
+{"text": "Gerçekten mi???", "expect": ["gerçekten mi?"], "reject": ["??"], "note": "noktalama: çoklu soru işareti"}
+{"text": "Dur!!! Gitme!!!", "expect": ["dur! gitme!"], "reject": ["!!"], "note": "noktalama: art arda cümlelerde çoklu ünlem"}
+{"text": "Ankara — başkent — çok soğuk.", "expect": ["ankara, başkent, çok soğuk"], "reject": ["—", "tire"], "note": "duraklama: uzun tire"}
+{"text": "Ali (kardeşim) geldi.", "expect": ["ali, kardeşim, geldi"], "reject": ["(", ")"], "note": "duraklama: parantez"}
+{"text": "Merhaba - nasılsın?", "expect": ["merhaba, nasılsın"], "reject": ["eksi", "tire"], "note": "duraklama: boşluklu kısa tire"}
+{"text": "Sonuç – maalesef – olumsuz.", "expect": ["sonuç, maalesef, olumsuz"], "reject": ["–"], "note": "duraklama: orta tire"}
+{"text": "Allah'a ısmarladık, hoşça kalın.", "expect": ["allah'a ısmarladık, hoşça kalın"], "reject": ["ısmarlıcaz"], "note": "günlük: Allah'a ısmarladık korunur"}
+{"text": "Hayırlı olsun, çok sevindim.", "expect": ["hayırlı olsun, çok sevindim"], "reject": [], "note": "günlük: hayırlı olsun"}
+{"text": "Kolay gelsin usta.", "expect": ["kolay gelsin usta"], "reject": [], "note": "günlük: kolay gelsin"}
+{"text": "Geçmiş olsun, çabuk iyileş.", "expect": ["geçmiş olsun, çabuk iyileş"], "reject": [], "note": "günlük: geçmiş olsun"}
+{"text": "Afiyet olsun!", "expect": ["afiyet olsun!"], "reject": [], "note": "günlük: afiyet olsun"}
+{"text": "Başınız sağ olsun.", "expect": ["başınız sağ olsun"], "reject": [], "note": "günlük: başınız sağ olsun"}
+{"text": "Allah'a emanet ol.", "expect": ["allah'a emanet ol"], "reject": [], "note": "günlük: Allah'a emanet ol"}
+{"text": "İnşallah yarın gelir.", "expect": ["inşallah yarın gelir"], "reject": [], "note": "günlük: inşallah"}
+{"text": "Maşallah çok büyümüş.", "expect": ["maşallah çok büyümüş"], "reject": [], "note": "günlük: maşallah"}
+{"text": "Ya bırak be!", "expect": ["ya bırak be!"], "reject": [], "note": "samimi: ya / be"}
+{"text": "Lan ne yapıyorsun?", "expect": ["lan napıyorsun"], "reject": [], "note": "samimi: lan korunur, ne yapıyorsun kaynaşır"}
+{"text": "Abi sen de ya.", "expect": ["abi sen de ya"], "reject": [], "note": "samimi: abi / ya"}
+{"text": "Oha be, harika olmuş!", "expect": ["oha be, harika olmuş!"], "reject": [], "note": "samimi: oha be"}
+{"text": "Kanka be, harbi güzel.", "expect": ["kanka be, harbi güzel"], "reject": [], "note": "samimi: kanka / harbi"}
+{"text": "İSTANBUL'DA YAĞMUR VAR.", "expect": ["istanbul'da yağmur var"], "reject": ["ıstanbul"], "note": "büyük harf: İ korunur"}
+{"text": "ILIK SU İÇ.", "expect": ["ılık su iç"], "reject": ["ilik"], "note": "büyük harf: ILIK (ı) ilik olmaz"}
+{"text": "KIRMIZI IŞIKTA DUR.", "expect": ["kırmızı ışıkta dur"], "reject": ["kirmizi", "işik"], "note": "büyük harf: noktasız I"}
+{"text": "İçeceğim artık.", "expect": ["içicem artık"], "reject": ["ıçicem"], "note": "büyük harf: cümle başı İ + gelecek zaman"}
+{"text": "Iğdır'a gittim.", "expect": ["ığdır'a gittim"], "reject": ["iğdır"], "note": "büyük harf: I ile başlayan özel ad"}
+{"text": "İYİ GECELER", "expect": ["iyi geceler"], "reject": ["ıyı"], "note": "büyük harf: tamamı büyük İ'li sözcükler"}
+{"text": "Bu işten kâr ettik.", "expect": ["kâr ettik"], "reject": ["kar ettik"], "note": "şapka: kâr (kar değil)"}
+{"text": "Hâlâ bekliyorum.", "expect": ["hâlâ bekliyorum"], "reject": ["hala bekliyorum"], "note": "şapka: hâlâ (hala değil)"}
+{"text": "Kâğıt ve kalem getir.", "expect": ["kâğıt ve kalem"], "reject": ["kağıt ve"], "note": "şapka: kâğıt"}
+{"text": "Rüzgâr çok sert.", "expect": ["rüzgâr çok sert"], "reject": ["rüzgar çok"], "note": "şapka: rüzgâr"}
+{"text": "Dükkânı kapattı.", "expect": ["dükkânı kapattı"], "reject": ["dükkanı"], "note": "şapka: dükkân + ek"}
+{"text": "SesKlon'u indirdim.", "expect": ["ses klon'u indirdim"], "reject": ["sesklon'u"], "note": "sözlük: kesmeli ek korunur (örnek sözlük: SesKlon → Ses Klon)"}
+{"text": "Michael Jackson dinledim.", "expect": ["maykıl ceksın dinledim"], "reject": ["michael", "jackson"], "note": "sözlük: iki ayrı girdi art arda (Michael, Jackson)"}
+{"text": "Hugging Face'te model var.", "expect": ["haging feys'te model"], "reject": ["hugging"], "note": "sözlük: çok sözcüklü anahtar + ek"}
+{"text": "Kayıt sesklon.app adresinde, SesKlon ücretsiz.", "expect": ["sesklon nokta ep", "ses klon ücretsiz"], "reject": ["ses klon nokta"], "note": "sözlük: URL'ye dokunulmaz, düz metinde uygulanır"}
+{"text": "Dr. Ahmet Bey geldi.", "expect": ["doktor ahmet bey"], "reject": ["nokta"], "note": "kısaltma: unvan"}
+{"text": "Elma, armut vb. aldık.", "expect": ["elma, armut ve benzeri aldık"], "reject": ["vb"], "note": "kısaltma: vb."}
+{"text": "T.C. kimlik numaranı yaz.", "expect": ["te ce kimlik"], "reject": ["nokta"], "note": "kısaltma: T.C."}
+{"text": "Prof. Dr. Ayşe Yılmaz konuştu.", "expect": ["profesör doktor ayşe yılmaz"], "reject": ["prof.", "dr."], "note": "kısaltma: art arda unvanlar"}
+{"text": "5G hızı çok iyi.", "expect": ["beş ge hızı"], "reject": ["beş ce"], "note": "kısaltma: 5G Türkiye'de 'beş ge' okunur (4.5G gibi)"}
+{"text": "4.5G çekiyor.", "expect": ["dört buçuk ge"], "reject": ["nokta"], "note": "kısaltma: 4.5G"}
+{"text": "4K TV aldım.", "expect": ["dört ka"], "reject": ["dört bin"], "note": "kısaltma: 4K çözünürlük, 4 bin değil"}
+{"text": "Su H2O formülüne sahiptir.", "expect": ["he iki o"], "reject": [], "note": "kısaltma: rakamlı formül"}
+{"text": "Geldim.Sonra gittim.", "expect": ["geldim. sonra gittim"], "reject": ["nokta"], "note": "noktalama: eksik boşluk tamamlanır"}

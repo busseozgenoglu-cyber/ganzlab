@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import Player, { fmtDur } from './Player'
 // Player'ın isteğe bağlı "aynı anda tek oynatıcı" yolu (playerBus / stopAllPlayers); yoksa sessizce atlanır.
@@ -6,7 +6,8 @@ import * as PlayerModule from './Player'
 
 // ─────────────────────────────────────────────────────────── sabitler ──
 
-const STORAGE_KEY = 'sesklon_generate_v3'
+const STORAGE_KEY = 'sesklon_generate_v4'
+const LEGACY_STORAGE_KEYS = ['sesklon_generate_v3'] // ilk açılışta okunur, v4 anahtarına taşınır ve silinir
 const CHARS_PER_SEC = 14 // Türkçe için kaba konuşma hızı (karakter / sn)
 const LETTERS = ['A', 'B', 'C', 'D']
 
@@ -49,8 +50,12 @@ const DEFAULTS = {
   exaggeration: 0.5, cfg_weight: 0.45, temperature: 0.8, speed: 1.0,
   pause_scale: 1.0, colloquial: 'light', breaths: true, room_tone: true, master: true,
   punctuation_emotion: true, auto_emotion: false, emotion: '', emotion_fx: 'off',
+  // v4: metin ve kalite katmanları (docs/SOZLESME2.md §9)
+  chat_speak: true, fillers: false, consistency: true, qc: true, subtitles: true,
   format: 'mp3', variants: 1,
 }
+// Konuşma dolguları bu stillerde sunucuda hiç eklenmez (lexicon.add_fillers) — seçenek devre dışı gösterilir.
+const FILLER_OFF_STYLES = new Set(['haber', 'belgesel', 'sesli-kitap', 'eğitim'])
 const LIMITS = {
   exaggeration: [0, 1.5], cfg_weight: [0, 1], temperature: [0.05, 2], speed: [0.7, 1.3],
   pause_scale: [0.5, 2], variants: [1, 4],
@@ -93,6 +98,40 @@ const isEnglishTag = (tag) => EN_TAGS.has(tag) || (!/[çğıöşüâîû]/i.test
 const TAG_RE = /\[([^\]\n]{1,40})\]/g
 const NUM_TAG_RE = /^(\d+(?:[.,]\d+)?)\s*(ms|sn|saniye|s)$/
 
+// Duygu yoğunluğu (sözleşme §3): [biraz X]/[hafif X] ≈×0,65 · [çok X] ≈×1,35 · [aşırı X] ≈×1,6 · ya da [X:1|2|3], [X %150].
+// Sunucudaki yoğunluk sözcükleri (emotion.INTENSITY_WORDS) — en uzun önce; etiket yeniden yazılırken atılır.
+const INTENSITY_QUALIFIERS = ['son derece', 'çok çok', 'birazcık', 'extremely', 'hafifçe', 'oldukça', 'slightly', 'azıcık', 'a bit',
+  'biraz', 'hafif', 'aşırı', 'epey', 'very', 'çok', 'az']
+const INTENSITY_LEVELS = [
+  { word: 'biraz', label: 'biraz', title: 'Hafif şiddet (≈ ×0,65): [biraz heyecanlı]' },
+  { word: '', label: 'normal', title: 'Varsayılan şiddet — öneki kaldırır: [heyecanlı]' },
+  { word: 'çok', label: 'çok', title: 'Güçlü şiddet (≈ ×1,35): [çok heyecanlı]' },
+]
+// health.tags.arcs / tags.controls gelmezse
+const FALLBACK_ARCS = [
+  { tag: 'sakinleşerek', to: 'sakin' }, { tag: 'heyecanlanarak', to: 'heyecanlı' }, { tag: 'yumuşayarak', to: 'samimi' },
+  { tag: 'sertleşerek', to: 'kızgın' }, { tag: 'hüzünlenerek', to: 'üzgün' },
+]
+const FALLBACK_CONTROLS = [{ tag: 'hız:0.9', label: 'Hız' }, { tag: 'perde:+1', label: 'Perde' }]
+// Sayısal satır içi kontroller (emotion._CONTROL_LABELS). "[ses:Ad]" konuşmacı kontrolüdür → Diyalog sekmesinde.
+const CONTROL_KINDS = { 'hız': 'rate', 'tempo': 'rate', 'perde': 'pitch', 'pitch': 'pitch' }
+const CONTROL_SPECS = {
+  rate: { min: 0.7, max: 1.3, step: 0.05, def: '0.9', signed: false, hint: 'Konuşma hızı: 0.7 (yavaş) – 1.3 (hızlı)' },
+  pitch: { min: -4, max: 4, step: 0.5, def: '+1', signed: true, hint: 'Ses perdesi, yarım ton: −4 (kalın) … +4 (ince)' },
+}
+const ANY_TAG_RE = /\[([^\[\]\n]{1,200})\]/g
+const NUM_SUFFIX_RE = /^\s*[+-]?\d+(?:[.,]\d+)?\s*$/
+const PCT_TAIL_RE = /\s*%\s*\d+(?:[.,]\d+)?\s*$/
+const PCT_HEAD_RE = /^\s*%\s*\d+(?:[.,]\d+)?\s+/
+const ASCII_FOLD = { ç: 'c', ğ: 'g', ı: 'i', ö: 'o', ş: 's', ü: 'u', â: 'a', î: 'i', û: 'u' }
+const READING_BLOCK_RE = /^\{([^{}|\n]+)(?:\|([^{}\n]*))?\}$/
+const WORD_CH_RE = /[\p{L}\p{N}_]/u
+const EDGE_CH_RE = /[\s.,;:!?…"“”'‘’()«»–—-]/u
+const EMPHASIS_MAX = 60 // sunucudaki *…* deseninin üst sınırı
+
+const QC_OK = 60 // qc.check_chunk: score ≥ 60 → kabul
+const SUB_FORMATS = [['srt', 'SRT'], ['vtt', 'VTT'], ['json', 'JSON']]
+
 // ─────────────────────────────────────────────────────────── yardımcılar ──
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
@@ -101,6 +140,155 @@ const fmtNum = (n) => String(Math.round(n * 10) / 10)
 const seedOf = (g) => g?.seed ?? g?.params?.seed ?? null
 const isCancelledError = (err) =>
   (typeof api.isCancelled === 'function' && api.isCancelled(err)) || err?.name === 'CancelledError' || err?.cancelled === true
+const capFirst = (s) => (s ? s.charAt(0).toLocaleUpperCase('tr') + s.slice(1) : '')
+const round2 = (n) => Math.round(n * 100) / 100
+
+/** Sohbet kısaltmaları ayrı bayrakla bildirilmezse sözlük modülüyle birlikte gelir. */
+const chatSpeakAvailable = (f) => (f.chat_speak !== undefined ? f.chat_speak !== false : f.lexicon !== false)
+
+/** Ses örneğinin türü: "nonverbal" (gerçek tepki) ya da "emotion" (duygu kaydı). */
+function sampleKind(s) {
+  if (s?.kind === 'nonverbal' || s?.kind === 'emotion') return s.kind
+  return typeof s?.emotion === 'string' && s.emotion.startsWith('nv:') ? 'nonverbal' : 'emotion'
+}
+const sampleKey = (s) => String(s?.emotion ?? '').replace(/^nv:/, '')
+
+function countSamples(samples) {
+  let emotion = 0
+  let nonverbal = 0
+  for (const s of samples || []) {
+    if (sampleKind(s) === 'nonverbal') nonverbal++
+    else emotion++
+  }
+  return { emotion, nonverbal }
+}
+
+/** Sunucudaki fold_ascii gibi: küçük harf + Türkçe harfler ASCII'ye ("Heyecanlı" → "heyecanli"). Uzunluk değişmez. */
+const foldAscii = (s) => trLower(s).replace(/[çğıöşüâîû]/g, (ch) => ASCII_FOLD[ch])
+
+/** Duygu adı ve eş adları (küçük harf ve ASCII karşılığı) → duygu adı. "normal" yoğunluk almaz. */
+function buildEmotionIndex(emotions) {
+  const m = new Map()
+  for (const e of emotions) {
+    if (!e?.name || e.name === 'normal') continue
+    for (const k of [e.name, ...(Array.isArray(e.aliases) ? e.aliases : [])]) {
+      const raw = String(k).trim()
+      for (const key of [trLower(raw), foldAscii(raw)]) if (key && !m.has(key)) m.set(key, e.name)
+    }
+  }
+  return m
+}
+
+const isEmotionName = (s, index) => index.has(trLower(s)) || index.has(foldAscii(s))
+
+/** Baştaki yoğunluk sözcüğünü atar: "çok çok üzgün" → "üzgün". */
+function stripQualifier(head) {
+  const folded = foldAscii(head)
+  for (const q of INTENSITY_QUALIFIERS) {
+    const prefix = `${foldAscii(q)} `
+    if (folded.startsWith(prefix)) return head.slice(prefix.length).trim()
+  }
+  return head
+}
+
+/**
+ * Köşeli parantez içini duygu etiketi olarak çözer: "biraz heyecanlı", "heyecanlı:3", "heyecanlı %150",
+ * "heyecanlı: kapsamlı metin", "çok üzgün+umutlu". Duygu değilse (duraklama, kontrol, geçiş, sözsüz…) null.
+ * Dönüş: { core: yoğunluksuz duygu ifadesi, tail: kapsamlı etiketin ": metin" kısmı }
+ */
+function parseEmotionInner(inner, index) {
+  let head = inner
+  let tail = ''
+  const colon = inner.indexOf(':')
+  if (colon >= 0) {
+    head = inner.slice(0, colon)
+    // [heyecanlı:3] sayısal yoğunluk → atılır (yerine önek gelecek); [heyecanlı: metin] kapsamlı → korunur
+    if (!NUM_SUFFIX_RE.test(inner.slice(colon + 1))) tail = inner.slice(colon)
+  }
+  head = stripQualifier(head.replace(PCT_TAIL_RE, '').replace(PCT_HEAD_RE, '').trim())
+  if (!head || /→|->/.test(head)) return null // [heyecanlı→sakin] geçiş etiketi
+  const first = head.split('+')[0].trim()
+  return isEmotionName(first, index) ? { core: head, tail } : null
+}
+
+/** İmleçten önceki (ya da imlecin içinde olduğu) son duygu etiketi: { core, tail, start, end, raw } | null */
+function findEmotionTagBefore(text, caret, index) {
+  let found = null
+  for (const m of text.matchAll(ANY_TAG_RE)) {
+    if (m.index >= caret) break
+    const p = parseEmotionInner(m[1], index)
+    if (p) found = { ...p, start: m.index, end: m.index + m[0].length, raw: m[0] }
+  }
+  return found
+}
+
+const emotionTagWith = (p, word) => `[${word ? `${word} ` : ''}${p.core}${p.tail}]`
+
+const isWordCh = (ch) => Boolean(ch) && WORD_CH_RE.test(ch)
+
+/**
+ * Seçimi sözcük sınırlarına oturtur: kenardaki boşluk/noktalama atılır, yarım kalan sözcük tamamlanır.
+ * Seçim yoksa imlecin üzerindeki sözcük. Uygun aralık yoksa null.
+ */
+function wordRange(text, start, end) {
+  let s = start
+  let e = end
+  if (s === e) {
+    while (s > 0 && isWordCh(text[s - 1])) s--
+    while (e < text.length && isWordCh(text[e])) e++
+    return s < e ? [s, e] : null
+  }
+  while (s < e && EDGE_CH_RE.test(text[s])) s++
+  while (e > s && EDGE_CH_RE.test(text[e - 1])) e--
+  if (s >= e) return null
+  while (s > 0 && isWordCh(text[s - 1]) && isWordCh(text[s])) s--
+  while (e < text.length && isWordCh(text[e - 1]) && isWordCh(text[e])) e++
+  return [s, e]
+}
+
+/** [s, e) aralığını saran tek satırlık open…close bloğunun sınırları ([a, b) — parantezler dahil) ya da null. */
+function enclosingBlock(text, s, e, open, close) {
+  if (s <= 0) return null
+  const a = text.lastIndexOf(open, s - 1)
+  if (a < 0 || text.lastIndexOf(close, s - 1) > a) return null
+  const b = text.indexOf(close, e)
+  if (b < 0) return null
+  const nextOpen = text.indexOf(open, e)
+  if (nextOpen >= 0 && nextOpen < b) return null
+  if (text.slice(a, b).includes('\n')) return null
+  return [a, b + 1]
+}
+
+function fmtControl(spec, n) {
+  const r = round2(n)
+  return spec.signed && r > 0 ? `+${r}` : String(r)
+}
+
+/** "+1.2 dB" / "−1.2 dB" (eksi işareti U+2212) */
+function signedDb(n) {
+  const r = Math.round(Number(n) * 10) / 10
+  if (!Number.isFinite(r) || r === 0) return '0 dB'
+  return `${r > 0 ? '+' : '−'}${Math.abs(r)} dB`
+}
+
+// Kalite kontrol (params.qc) yardımcıları
+const qcScore = (q) => {
+  const n = Number(q?.score)
+  return q?.score != null && Number.isFinite(n) ? n : null
+}
+const qcLow = (q) => {
+  const s = qcScore(q)
+  return (s != null && s < QC_OK) || q?.ok === false
+}
+const qcRetried = (q) =>
+  q?.retried === true || Number(q?.retries) > 0 || Number(q?.attempts) > 1 || /^retry/.test(String(q?.decision || ''))
+function qcByIndex(qc) {
+  const m = new Map()
+  ;(Array.isArray(qc) ? qc : []).forEach((q, i) => {
+    if (q && typeof q === 'object') m.set(Number.isInteger(q.index) ? q.index : i, q)
+  })
+  return m
+}
 
 function fmtSecs(s) {
   const t = Math.max(0, Math.round(s))
@@ -182,14 +370,26 @@ function sanitizeUi(raw) {
   return u
 }
 
+/** Kayıtlı durumu okur; yalnızca eski (v3) kayıt varsa onu v4 anahtarına taşır. Yeni alanlar varsayılanla dolar. */
 function loadSaved() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    const data = raw ? JSON.parse(raw) : null
-    return data && typeof data === 'object' ? data : null
-  } catch {
-    return null
+  for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
+    let data = null
+    try {
+      const raw = localStorage.getItem(key)
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = null // bozuk kayıt ya da depolama kapalı: sıradakine bak
+    }
+    if (!data || typeof data !== 'object') continue
+    if (key !== STORAGE_KEY) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, v: 4 }))
+        localStorage.removeItem(key)
+      } catch { /* taşınamazsa bir sonraki kayıtta yazılır */ }
+    }
+    return data
   }
+  return null
 }
 
 function saveState(data) {
@@ -236,8 +436,9 @@ function voiceOptionLabel(v) {
   const bits = []
   const q = v.analysis?.quality_score
   if (Number.isFinite(q)) bits.push(`★ ${Math.round(q)}`)
-  const n = v.samples?.length || 0
-  if (n) bits.push(`${n} duygu kaydı`)
+  const n = countSamples(v.samples)
+  if (n.emotion) bits.push(`${n.emotion} duygu kaydı`)
+  if (n.nonverbal) bits.push(`${n.nonverbal} tepki`)
   return bits.length ? `${v.name} (${bits.join(' • ')})` : v.name
 }
 
@@ -286,6 +487,27 @@ function buildCatalog(h) {
     const list = Array.isArray(tags.pauses) ? tags.pauses : []
     pauses = PREF_PAUSES.filter((t) => !list.length || list.includes(t)).map((tag) => ({ tag, ms: FALLBACK_PAUSE_MS[tag] }))
   }
+  const bare = (t) => String(t).trim().replace(/^\[|\]$/g, '').split(':')[0].trim()
+  const arcs = Array.isArray(tags.arcs)
+    ? tags.arcs.filter((a) => a && typeof a.tag === 'string' && bare(a.tag))
+      .map((a) => ({ tag: bare(a.tag), to: typeof a.to === 'string' ? a.to : '' }))
+    : FALLBACK_ARCS
+  // Kontroller: {tag: "hız:0.9", label} → { tag: "hız", kind: "rate", def: "0.9" }; sayısal olmayanlar (ses:Ad) atlanır
+  const controls = []
+  for (const c of Array.isArray(tags.controls) ? tags.controls : FALLBACK_CONTROLS) {
+    const raw = c && typeof c.tag === 'string' ? c.tag.trim().replace(/^\[|\]$/g, '') : ''
+    const tag = bare(raw)
+    const kind = CONTROL_KINDS[trLower(tag)]
+    if (!kind || controls.some((x) => x.kind === kind)) continue
+    const example = raw.includes(':') ? raw.slice(raw.indexOf(':') + 1).trim() : ''
+    const def = NUM_SUFFIX_RE.test(example) ? example : CONTROL_SPECS[kind].def
+    controls.push({ tag, kind, def, label: typeof c.label === 'string' && c.label ? c.label : capFirst(tag) })
+  }
+  // Sayısal yoğunluk ipucu: [{suffix: ":1", label: "hafif"}, …] — yalnızca ":N" biçimindekiler gösterilir
+  const intensity = (Array.isArray(tags.intensity) ? tags.intensity : [])
+    .filter((i) => i && (typeof i.suffix === 'string' || typeof i.suffix === 'number') && typeof i.label === 'string')
+    .map((i) => ({ suffix: /^\d/.test(String(i.suffix)) ? `:${i.suffix}` : String(i.suffix), label: i.label }))
+    .filter((i) => i.suffix.startsWith(':'))
   return {
     styles: Array.isArray(h?.styles) ? h.styles.filter((s) => s && typeof s.name === 'string') : [],
     levels: Array.isArray(h?.colloquial_levels) && h.colloquial_levels.length ? h.colloquial_levels : DEFAULT_LEVELS,
@@ -294,6 +516,9 @@ function buildCatalog(h) {
     nonverbal,
     pauses,
     pauseMs,
+    arcs,
+    controls,
+    intensity,
   }
 }
 
@@ -439,11 +664,14 @@ const Check = memo(function Check({ name, title, desc, note, checked, disabled, 
   )
 })
 
-function TagGroup({ title, children }) {
+function TagGroup({ title, desc, children }) {
   const id = useId()
   return (
-    <div className="taggroup" role="group" aria-labelledby={id}>
-      <span id={id} className="muted small">{title}</span>
+    <div className="taggroup" role="group" aria-labelledby={`${id}t`} aria-describedby={desc ? `${id}d` : undefined}>
+      <span className="small">
+        <b id={`${id}t`}>{title}</b>
+        {desc && <span id={`${id}d`} className="muted"> — {desc}</span>}
+      </span>
       <div className="presets">{children}</div>
     </div>
   )
@@ -506,41 +734,99 @@ const StyleChips = memo(function StyleChips({ styles, active, customized, onSele
   )
 })
 
-const TagBox = memo(function TagBox({ id, emotions, nonverbal, pauses, onInsert }) {
+/** Etiket kutusundaki sayı girişi + "ekle" düğmesi (sayılı duraklama, hız, perde). Enter da ekler. */
+function NumberTag({ label, value, onValue, spec, token, onAdd, addLabel }) {
+  const id = useId()
+  const onKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); if (token) onAdd(token) }
+  }
+  return (
+    <span className="actions tag-control">
+      <label className="inline small" htmlFor={id} title={spec.hint || undefined}>
+        {label}
+        <input id={id} className="num-sm" type="number" min={spec.min} max={spec.max} step={spec.step} value={value}
+          onChange={(e) => onValue(e.target.value)} onKeyDown={onKeyDown} />
+        {spec.unit}
+      </label>
+      <button type="button" className="btn ghost small" disabled={!token} onClick={() => onAdd(token)}
+        aria-label={token ? addLabel : 'Geçerli bir değer gir'}>
+        + {token || '[?]'}
+      </button>
+    </span>
+  )
+}
+
+const keepSelection = (e) => e.preventDefault() // tıklayınca odak/seçim metin kutusunda kalsın
+
+const TagBox = memo(function TagBox({ id, catalog, recordedNv, onInsert, onEmotion, onIntensity, onEmphasis, onReading }) {
+  const { emotions, nonverbal, pauses, arcs, controls, intensity, features } = catalog
+  const showIntensity = features.intensity !== false
+  const showEmphasis = features.emphasis !== false
+  const showReading = features.lexicon !== false
   const [secs, setSecs] = useState('1.5')
-  const secsId = useId()
+  const [ctl, setCtl] = useState({}) // kontrol etiketi → girilen değer (metin)
   const n = Number.parseFloat(String(secs).replace(',', '.'))
   const value = Number.isFinite(n) && n > 0 ? clamp(Math.round(n * 10) / 10, 0.1, 10) : null
-  const addNumeric = () => { if (value != null) onInsert(`[${value} sn]`) }
+  const hasRealNv = nonverbal.some((t) => recordedNv.has(t.tag))
 
   return (
     <div className="tagbox" id={id}>
       <div className="muted small">
-        İmlecin olduğu yere eklenir; duygu, bir sonraki duygu etiketine kadar sürer. Noktalama da tonu etkiler:
+        İmlecin olduğu yere eklenir. Noktalama da tonu etkiler:
         {' '}<b>!</b> vurgulu, <b>?</b> yükselen ton, <b>...</b> düşünceli.
       </div>
       {emotions.length > 0 && (
-        <TagGroup title="Duygu">
+        <TagGroup title="Duygu" desc="bir sonraki duygu etiketine kadar sürer">
           {emotions.map((e) => {
             const label = e.label || e.name
             const tip = [e.description, e.aliases?.length ? `Diğer adları: ${e.aliases.slice(0, 5).join(', ')}` : '']
               .filter(Boolean).join(' • ')
             return (
               <button key={e.name} type="button" className="chip clickable" title={tip || undefined}
-                aria-label={`Duygu etiketi ekle: ${label}`} onClick={() => onInsert(`[${e.name}]`)}>[{label}]</button>
+                aria-label={`Duygu etiketi ekle: ${label}`} onClick={() => onEmotion(e.name)}>[{label}]</button>
             )
           })}
         </TagGroup>
       )}
-      {nonverbal.length > 0 && (
-        <TagGroup title="Sözsüz">
-          {nonverbal.map((t) => (
-            <button key={t.tag} type="button" className="chip clickable" title={t.reads ? `Okunuşu: “${t.reads}”` : undefined}
-              aria-label={`Sözsüz etiket ekle: ${t.tag}`} onClick={() => onInsert(`[${t.tag}]`)}>[{t.tag}]</button>
+      {showIntensity && emotions.length > 0 && (
+        <TagGroup title="Yoğunluk" desc="imleçten önceki son duygu etiketinin şiddeti; yoksa seçtiğin duyguyla yeni etiket">
+          {INTENSITY_LEVELS.map((l) => (
+            <button key={l.label} type="button" className="chip clickable" title={l.title} onMouseDown={keepSelection}
+              aria-label={`Duygu yoğunluğu: ${l.label}`} onClick={() => onIntensity(l.word)}>
+              {l.label}
+            </button>
+          ))}
+          {intensity.length > 0 && (
+            <span className="muted small">Sayıyla da: {intensity.map((i) => `[heyecanlı${i.suffix}] ${i.label}`).join(' · ')}</span>
+          )}
+        </TagGroup>
+      )}
+      {showIntensity && arcs.length > 0 && (
+        <TagGroup title="Geçiş" desc="bölüm boyunca bir tona yavaşça kayar; [heyecanlı→sakin] de yazılabilir">
+          {arcs.map((a) => (
+            <button key={a.tag} type="button" className="chip clickable"
+              title={a.to ? `Bölüm boyunca "${a.to}" tona kayar` : undefined}
+              aria-label={`Geçiş etiketi ekle: ${a.tag}`} onClick={() => onInsert(`[${a.tag}]`)}>[{a.tag}]</button>
           ))}
         </TagGroup>
       )}
-      <TagGroup title="Duraklama">
+      {nonverbal.length > 0 && (
+        <TagGroup title="Sözsüz"
+          desc={hasRealNv ? '✓ olanlarda bu sesin gerçek kaydı çalınır, diğerleri ünleme çevrilip okunur'
+            : 'ünleme çevrilip okunur; Sesler sekmesinden kendi gülmeni, iç çekmeni kaydedebilirsin'}>
+          {nonverbal.map((t) => {
+            const real = recordedNv.has(t.tag)
+            const title = real ? 'Bu sesin gerçek kaydı çalınır' : t.reads ? `Okunuşu: “${t.reads}”` : undefined
+            return (
+              <button key={t.tag} type="button" className={`chip clickable${real ? ' on' : ''}`} title={title}
+                aria-label={`Sözsüz etiket ekle: ${t.tag}${real ? ' (gerçek kayıt var)' : ''}`} onClick={() => onInsert(`[${t.tag}]`)}>
+                [{t.tag}]{real && ' ✓'}
+              </button>
+            )
+          })}
+        </TagGroup>
+      )}
+      <TagGroup title="Duraklama" desc="o noktada sessizlik">
         {pauses.map((p) => (
           <button key={p.tag} type="button" className="chip clickable"
             title={Number.isFinite(p.ms) ? `${p.ms} ms duraklama` : undefined}
@@ -548,22 +834,46 @@ const TagBox = memo(function TagBox({ id, emotions, nonverbal, pauses, onInsert 
             [{p.tag}]{Number.isFinite(p.ms) && <span className="muted"> {fmtNum(p.ms / 1000)} sn</span>}
           </button>
         ))}
+        <NumberTag label="Sayılı" value={secs} onValue={setSecs} spec={{ min: 0.1, max: 10, step: 0.1, unit: 'sn' }}
+          token={value != null ? `[${value} sn]` : null} onAdd={onInsert} addLabel={`${value} saniyelik duraklama ekle`} />
       </TagGroup>
-      <div className="row">
-        <label className="inline small" htmlFor={secsId}>
-          Sayılı duraklama
-          <input id={secsId} className="num-sm" type="number" min="0.1" max="10" step="0.1" value={secs}
-            onChange={(e) => setSecs(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); addNumeric() }
-            }} />
-          sn
-        </label>
-        <button type="button" className="btn ghost small" disabled={value == null} onClick={addNumeric}
-          aria-label={value != null ? `${value} saniyelik duraklama ekle` : 'Geçerli bir süre gir'}>
-          + [{value ?? '?'} sn] ekle
-        </button>
-      </div>
+      {showIntensity && controls.length > 0 && (
+        <TagGroup title="Kontrol" desc={`bulunduğu yerden itibaren geçerli; [${controls[0].tag}:normal] varsayılana döndürür`}>
+          {controls.map((c) => {
+            const spec = CONTROL_SPECS[c.kind]
+            const raw = ctl[c.kind] ?? c.def
+            const num = Number.parseFloat(String(raw).replace(',', '.'))
+            const ok = Number.isFinite(num) && num >= spec.min && num <= spec.max
+            const token = ok ? `[${c.tag}:${fmtControl(spec, num)}]` : null
+            return (
+              <Fragment key={c.kind}>
+                <NumberTag label={c.label} value={raw} spec={spec} token={token} onAdd={onInsert}
+                  onValue={(v) => setCtl((s) => ({ ...s, [c.kind]: v }))} addLabel={`${c.label} etiketi ekle: ${token}`} />
+                <button type="button" className="chip clickable small" title={`${c.label} varsayılana döner`}
+                  aria-label={`${c.label} sıfırlama etiketi ekle`} onClick={() => onInsert(`[${c.tag}:normal]`)}>
+                  [{c.tag}:normal]
+                </button>
+              </Fragment>
+            )
+          })}
+        </TagGroup>
+      )}
+      {(showEmphasis || showReading) && (
+        <TagGroup title="Seçili metin" desc="önce metinde bir sözcük seç (ya da imleci üzerine getir)">
+          {showEmphasis && (
+            <button type="button" className="chip clickable" onMouseDown={keepSelection} onClick={onEmphasis}
+              title="Seçili sözcüğü ya da kısa öbeği vurgular: *çok* önemli. Vurgulu sözcükte yeniden basınca kaldırır.">
+              <b>*Vurgu*</b>
+            </button>
+          )}
+          {showReading && (
+            <button type="button" className="chip clickable" onMouseDown={keepSelection} onClick={onReading}
+              title="Seçili sözcüğün nasıl okunacağını sorar: {Shopify|Şopifay}. Kalıcı okunuşlar için Telaffuz sekmesi.">
+              {'{Okunuş}'}
+            </button>
+          )}
+        </TagGroup>
+      )}
     </div>
   )
 })
@@ -577,7 +887,8 @@ const VoiceInfo = memo(function VoiceInfo({ id, voice }) {
   const extras = []
   if (a?.f0?.label && a.f0.label !== 'belirsiz') extras.push(`${a.f0.label} sesi`)
   if (a?.speaking_rate?.label) extras.push(`${a.speaking_rate.label} tempo`)
-  const samples = voice.samples?.length || 0
+  const samples = countSamples(voice.samples).emotion
+  const nvKeys = [...new Set((voice.samples || []).filter((s) => sampleKind(s) === 'nonverbal').map(sampleKey))]
   return (
     <div id={id} className="voice-info">
       {(score != null || grade) && (
@@ -591,17 +902,26 @@ const VoiceInfo = memo(function VoiceInfo({ id, voice }) {
           Bu sesin duygu kaydı yok; duygular yalnızca ayarlarla verilir. Belirgin duygu için "Sesler" sekmesinden o duyguda kayıt ekle.
         </div>
       )}
+      {nvKeys.length > 0 && (
+        <div className="muted small" title="Bu etiketlerde modelin ünlemi yerine sesin kendi kaydı çalınır">
+          Gerçek tepkiler: {nvKeys.slice(0, 8).map((k) => `[${k}]`).join(' ')}{nvKeys.length > 8 ? ` +${nvKeys.length - 8}` : ''}
+        </div>
+      )}
     </div>
   )
 })
 
-const NaturalnessPanel = memo(function NaturalnessPanel({ settings, levels, features, language, voicePauseScale, open, onToggle, onChange }) {
+const NaturalnessPanel = memo(function NaturalnessPanel({ settings, levels, features, language, voicePauseScale, fillersBlockedBy,
+  open, onToggle, onChange }) {
   const levelOptions = useMemo(() => {
     const list = levels.includes(settings.colloquial) ? levels : [...levels, settings.colloquial]
     return list.map((l) => [l, COLLOQUIAL_LABELS[l] || l])
   }, [levels, settings.colloquial])
   const missing = (k) => features[k] === false
+  const shown = (k) => features[k] !== false // v4 seçenekleri: sunucu "yok" derse hiç gösterilmez
   const note = (k) => (missing(k) ? 'bu sunucuda yok' : '')
+  const trNote = language !== 'tr' ? 'yalnızca Türkçe metinde' : ''
+  const chatOk = chatSpeakAvailable(features)
   const pauseHint = Number.isFinite(voicePauseScale)
     ? `Bu sesin doğal ritmi ×${voicePauseScale.toFixed(2)} (otomatik uygulanır).`
     : 'Cümleler arasındaki duraklamaları uzatır ya da kısaltır.'
@@ -612,6 +932,19 @@ const NaturalnessPanel = memo(function NaturalnessPanel({ settings, levels, feat
       <div className="stack panel-body">
         <SelectField name="colloquial" label="Konuşma dili" value={settings.colloquial} options={levelOptions} onChange={onChange}
           hint={language === 'tr' ? 'Yazı dilini konuşur gibi okutur: "geleceğim" → "gelicem".' : 'Yalnızca Türkçe metinlerde etkili.'} />
+        {(chatOk || shown('fillers')) && (
+          <div className="checklist">
+            {chatOk && (
+              <Check name="chat_speak" title="Sohbet kısaltmaları" desc="tmm → tamam, slm → selam, nbr → naber"
+                checked={settings.chat_speak} note={trNote} onChange={onChange} />
+            )}
+            {shown('fillers') && (
+              <Check name="fillers" title="Konuşma dolguları" desc="yani, hani, işte (sohbet için)"
+                checked={settings.fillers && !fillersBlockedBy} disabled={Boolean(fillersBlockedBy)}
+                note={fillersBlockedBy ? `"${fillersBlockedBy}" stilinde kullanılmaz` : trNote} onChange={onChange} />
+            )}
+          </div>
+        )}
         <div className="checklist">
           <Check name="breaths" title="Nefes" desc="Cümleler arasında doğal nefes" checked={settings.breaths}
             disabled={missing('breaths')} note={note('breaths')} onChange={onChange} />
@@ -628,6 +961,25 @@ const NaturalnessPanel = memo(function NaturalnessPanel({ settings, levels, feat
           hint={pauseHint} onChange={onChange} />
         <SelectField name="emotion_fx" label="Ses işleme seviyesi" value={settings.emotion_fx} options={FX_OPTIONS} onChange={onChange}
           hint="Duyguyu çıktı sesine perde, tempo ve kazançla ekler. En doğal sonuç için kapalı önerilir." />
+        {(shown('consistency') || shown('qc') || shown('subtitles')) && (
+          <div className="stack tight">
+            <span className="muted small">Kalite ve çıktı</span>
+            <div className="checklist">
+              {shown('consistency') && (
+                <Check name="consistency" title="Tutarlılık" desc="parçalar arası tını/seviye eşitleme"
+                  checked={settings.consistency} onChange={onChange} />
+              )}
+              {shown('qc') && (
+                <Check name="qc" title="Kalite kontrol" desc="bozuk parçayı farklı tohumla yeniden üret"
+                  checked={settings.qc} onChange={onChange} />
+              )}
+              {shown('subtitles') && (
+                <Check name="subtitles" title="Altyazı üret" desc="SRT, VTT ve JSON zaman çizelgesi"
+                  checked={settings.subtitles} onChange={onChange} />
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </details>
   )
@@ -781,35 +1133,203 @@ function ColloquialChanges({ changes }) {
 
 function chunkMeta(c) {
   const bits = []
+  if (c.speaker) bits.push(c.speaker)
+  if (c.nonverbal) bits.push(`gerçek tepki: ${String(c.nonverbal).replace(/^nv:/, '')}`)
   if (c.ref) bits.push(`ref: ${c.ref}`)
+  const intensity = Number(c.intensity)
+  if (c.intensity != null && Number.isFinite(intensity) && Math.abs(intensity - 1) > 0.01) bits.push(`yoğunluk ×${round2(intensity)}`)
+  if (Array.isArray(c.blend) && c.blend.length) bits.push(`+ ${c.blend.join(', ')}`)
+  if (c.arc_to) bits.push(`→ ${c.arc_to}`)
   if (c.exaggeration != null) bits.push(`vurgu ${c.exaggeration}`)
   if (c.speed != null) bits.push(`hız ${c.speed}×`)
+  const pitch = Number(c.pitch)
+  if (c.pitch != null && Number.isFinite(pitch) && pitch !== 0) bits.push(`perde ${pitch > 0 ? '+' : ''}${round2(pitch)}`)
   if (c.pause_ms) bits.push(`ardından ${c.pause_ms} ms`)
   if (c.breath || c.breath_before) bits.push('nefes')
   if (c.duration != null) bits.push(fmtDur(c.duration))
   return bits.join(' • ')
 }
 
-function ChunkDetails({ chunks }) {
+function ChunkDetails({ chunks, qc }) {
   if (!Array.isArray(chunks) || !chunks.length) return null
+  const byIdx = qcByIndex(qc)
+  const qcOf = (c, i) => byIdx.get(Number.isInteger(c?.index) ? c.index : i)
+  const low = chunks.filter((c, i) => qcLow(qcOf(c, i))).length
   return (
     <details className="chunks">
-      <summary className="muted small">Cümle cümle ne yapıldı ({chunks.length} parça)</summary>
+      <summary className="muted small">
+        Cümle cümle ne yapıldı ({chunks.length} parça{low ? ` — ⚠ ${low} düşük puanlı` : ''})
+      </summary>
       <ul className="list">
-        {chunks.map((c, i) => (
-          <li key={i} className="item small">
-            <div className="row between">
-              <span><span className={`tag ${c.emotion ? 'emo' : ''}`}>{c.emotion || 'nötr'}</span> <span className="muted">{chunkMeta(c)}</span></span>
-            </div>
-            <div>{c.text}</div>
-          </li>
-        ))}
+        {chunks.map((c, i) => {
+          const q = qcOf(c, i)
+          const score = qcScore(q)
+          const bad = qcLow(q)
+          const retried = qcRetried(q)
+          const trimmed = q?.decision === 'trim'
+          const reasons = (Array.isArray(q?.reasons) ? q.reasons : []).filter((r) => r && (r.message || r.code))
+          const qcBits = [score != null ? `kalite ${Math.round(score)}` : '', retried ? '↻ yeniden üretildi' : '', trimmed ? 'kırpıldı' : '']
+            .filter(Boolean)
+          return (
+            <li key={i} className={`item small${bad ? ' qc-low' : ''}`}>
+              <div className="row between">
+                <span><span className={`tag ${c.emotion ? 'emo' : ''}`}>{c.emotion || 'nötr'}</span> <span className="muted">{chunkMeta(c)}</span></span>
+                {qcBits.length > 0 && (
+                  <span className={`small ${bad ? 'warn-text' : 'muted'}`} title="Kalite kontrol puanı (0–100)">
+                    {bad ? '⚠ ' : ''}{qcBits.join(' · ')}
+                  </span>
+                )}
+              </div>
+              <div>{c.text || (c.nonverbal ? `[${String(c.nonverbal).replace(/^nv:/, '')}]` : '')}</div>
+              {reasons.length > 0 && (bad || retried || trimmed) && (
+                <ul className={`small qc-reasons ${bad ? 'warn-text' : 'muted'}`} aria-label="Kalite kontrol nedenleri">
+                  {reasons.map((r, k) => <li key={k}>{r.message || r.code}</li>)}
+                </ul>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </details>
   )
 }
 
-const VariantResult = memo(function VariantResult({ result, languages, autoPlay, favs, onFavorite, onRegenerate, onPinSeed }) {
+/** Sonuç raporu: kalite kontrol özeti, tutarlılık düzeltmeleri, kullanılan gerçek tepkiler. */
+function GenReport({ params }) {
+  const p = params && typeof params === 'object' ? params : {}
+  const lines = []
+
+  const qcList = Array.isArray(p.qc_reports) ? p.qc_reports : (Array.isArray(p.qc) ? p.qc : [])
+  const qc = qcList.filter((q) => q && typeof q === 'object')
+  if (qc.length) {
+    const scores = qc.map(qcScore).filter((s) => s != null)
+    const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null
+    const retried = qc.filter(qcRetried).length
+    const trimmed = qc.filter((q) => q.decision === 'trim').length
+    const low = qc.filter(qcLow).length
+    const bits = []
+    if (avg != null) bits.push(`ortalama ${avg}/100`)
+    bits.push(retried ? `${retried} parça yeniden üretildi` : 'yeniden üretim gerekmedi')
+    if (trimmed) bits.push(`${trimmed} parça kırpıldı`)
+    lines.push(
+      <div key="qc" className="small">
+        <b>Kalite kontrol:</b> {bits.join(' · ')}
+        {low > 0 && <span className="warn-text"> · ⚠ {low} parça düşük puanlı (aşağıda "Cümle cümle")</span>}
+      </div>,
+    )
+  }
+
+  const c = (p.consistency_report && typeof p.consistency_report === 'object') ? p.consistency_report : (p.consistency && typeof p.consistency === 'object' ? p.consistency : null)
+  if (c && typeof c === 'object') {
+    const bits = []
+    const t = Number(c.timbre_db)
+    if (c.timbre_db != null && Number.isFinite(t) && Math.abs(t) >= 0.05) bits.push(`tını ${signedDb(t)}`)
+    const steps = Number(c.loudness_steps)
+    if (Number.isFinite(steps) && steps > 0) bits.push(`${steps} parça seviyelendi`)
+    lines.push(
+      <div key="consistency" className="small">
+        <b>Tutarlılık:</b> {bits.length ? bits.join(', ') : 'parçalar zaten uyumluydu, düzeltme gerekmedi'}
+      </div>,
+    )
+  }
+
+  const used = [...new Set((Array.isArray(p.nonverbal_used) ? p.nonverbal_used : [])
+    .map((u) => String(u && typeof u === 'object' ? (u.key ?? u.tag ?? '') : u ?? '').replace(/^nv:/, '').trim())
+    .filter(Boolean))]
+  if (used.length) {
+    lines.push(
+      <div key="nv" className="small" title="Bu etiketlerde modelin ünlemi yerine sesin kendi kaydı çalındı">
+        <b>Kullanılan tepkiler:</b> {used.join(', ')}
+      </div>,
+    )
+  }
+
+  return lines.length ? <div className="stack tight gen-report">{lines}</div> : null
+}
+
+// api.js 404'ü zaten "bu üretimin altyazısı yok" diye açıklar; sunucu mesajı varsa o gösterilir.
+const subtitleError = (err) => err?.message || 'Altyazı alınamadı.'
+
+/** "Altyazı: SRT · VTT · JSON" indirme düğmeleri + önizleme. */
+function SubtitleBar({ gen, notify }) {
+  const [busy, setBusy] = useState('')
+  const [preview, setPreview] = useState(null) // { format, text, loading, error }
+  const reqRef = useRef(0)
+  const timeline = gen.params?.timeline
+  const available = (Array.isArray(timeline) && timeline.length > 0) || gen.params?.subtitles === true
+  if (!available || !gen.id) return null
+
+  async function download(fmt) {
+    if (typeof api.subtitles !== 'function') { notify('Altyazı indirme bu sürümde yok.', 'error'); return }
+    setBusy(fmt)
+    try {
+      await api.subtitles(gen.id, fmt)
+    } catch (err) {
+      notify(subtitleError(err), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function show(fmt) {
+    const id = ++reqRef.current
+    if (typeof api.subtitleText !== 'function') {
+      setPreview({ format: fmt, text: '', loading: false, error: 'Altyazı önizleme bu sürümde yok.' })
+      return
+    }
+    setPreview({ format: fmt, text: '', loading: true, error: '' })
+    try {
+      const res = await api.subtitleText(gen.id, fmt)
+      let text = typeof res === 'string' ? res : JSON.stringify(res, null, 2)
+      if (fmt === 'json' && typeof res === 'string') {
+        try { text = JSON.stringify(JSON.parse(res), null, 2) } catch { /* olduğu gibi göster */ }
+      }
+      if (id === reqRef.current) setPreview({ format: fmt, text, loading: false, error: '' })
+    } catch (err) {
+      if (id === reqRef.current) setPreview({ format: fmt, text: '', loading: false, error: subtitleError(err) })
+    }
+  }
+
+  const close = () => { reqRef.current += 1; setPreview(null) }
+
+  return (
+    <div className="stack tight">
+      <div className="row subtitle-bar">
+        <span className="small"><b>Altyazı:</b></span>
+        {SUB_FORMATS.map(([f, label]) => (
+          <button key={f} type="button" className="btn ghost small" disabled={busy === f} onClick={() => download(f)}
+            title={`${label} dosyası olarak indir`} aria-label={`Altyazıyı ${label} olarak indir`}>
+            {busy === f ? 'İniyor…' : `⤓ ${label}`}
+          </button>
+        ))}
+        <button type="button" className="btn ghost small" aria-expanded={Boolean(preview)}
+          onClick={() => (preview ? close() : show('srt'))}>
+          {preview ? 'Önizlemeyi kapat' : 'Önizle'}
+        </button>
+      </div>
+      {preview && (
+        <div className="stack tight">
+          <div className="presets" role="group" aria-label="Önizleme biçimi">
+            {SUB_FORMATS.map(([f, label]) => (
+              <button key={f} type="button" className={`chip clickable small${preview.format === f ? ' active' : ''}`}
+                aria-pressed={preview.format === f} onClick={() => show(f)}>{label}</button>
+            ))}
+          </div>
+          {preview.loading ? (
+            <div className="muted small" role="status"><span className="spinner" aria-hidden="true" /> Altyazı yükleniyor…</div>
+          ) : preview.error ? (
+            <div className="alert error">{preview.error}</div>
+          ) : (
+            <pre className="subtitle-preview" tabIndex={0}
+              aria-label={`Altyazı önizlemesi (${preview.format.toUpperCase()})`}>{preview.text || '(boş)'}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const VariantResult = memo(function VariantResult({ result, languages, autoPlay, favs, onFavorite, onRegenerate, onPinSeed, notify }) {
   const variants = Array.isArray(result.variants) && result.variants.length > 1 ? result.variants.slice(0, LETTERS.length) : [result]
   const multi = variants.length > 1
   const [idx, setIdx] = useState(0)
@@ -873,8 +1393,10 @@ const VariantResult = memo(function VariantResult({ result, languages, autoPlay,
           Tohumu sabitle{seed != null ? ` (${seed})` : ''}
         </button>
       </div>
+      <GenReport params={gen.params} />
+      <SubtitleBar key={gen.id} gen={gen} notify={notify} />
       <ColloquialChanges changes={gen.params?.colloquial_changes} />
-      <ChunkDetails chunks={gen.params?.chunks} />
+      <ChunkDetails chunks={gen.params?.chunks} qc={gen.params?.qc_reports ?? gen.params?.qc} />
       {gen.params?.normalized_text && (
         <details className="chunks">
           <summary className="muted small">Modelin okuduğu metin</summary>
@@ -905,6 +1427,7 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
 
   const textRef = useRef(null)
   const focusedOnceRef = useRef(false) // metin kutusu hiç odaklanmadıysa etiket sona eklenir
+  const lastEmotionRef = useRef('') // etiket kutusunda son tıklanan duygu (yoğunluk düğmeleri yeni etiket eklerken kullanır)
   const touchedRef = useRef(false) // kullanıcı ayarlara dokunduysa otomatik stil seçimi yapılmaz
   const busyRef = useRef(false)
   const runRef = useRef(0) // her üretim bir "çalışma"; iptal edilen çalışmanın sonucu yok sayılır
@@ -940,6 +1463,11 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
     if (settings.emotion && !opts.some(([v]) => v === settings.emotion)) opts.push([settings.emotion, settings.emotion])
     return opts
   }, [catalog.emotions, settings.emotion])
+  const emotionIndex = useMemo(() => buildEmotionIndex(catalog.emotions), [catalog.emotions])
+  // Seçili sesin gerçek tepki kayıtları (etiket kutusunda ✓ ile gösterilir)
+  const nvSamplesKey = (selectedVoice?.samples || []).filter((s) => sampleKind(s) === 'nonverbal').map(sampleKey).sort().join('|')
+  const recordedNv = useMemo(() => new Set(nvSamplesKey ? nvSamplesKey.split('|') : []), [nvSamplesKey])
+  const fillersBlockedBy = activeStyle && FILLER_OFF_STYLES.has(activeStyle.name) ? activeStyle.label || activeStyle.name : ''
 
   // Canlı önizleme: yalnızca yeni parça geldiğinde yeni dizi (her yoklamada değil)
   const rawPartial = job?.partial
@@ -988,7 +1516,7 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
 
   // Kalıcılık (400 ms gecikmeli; bileşen kapanırken hemen yaz)
   useEffect(() => {
-    latestSaveRef.current = { v: 3, settings, voiceId, text, ui }
+    latestSaveRef.current = { v: 4, settings, voiceId, text, ui }
     const t = setTimeout(() => saveState(latestSaveRef.current), 400)
     return () => clearTimeout(t)
   }, [settings, voiceId, text, ui])
@@ -1040,6 +1568,140 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
   })
   const onTextChange = (e) => setText(e.target.value.slice(0, maxChars))
   const onTextFocus = () => { focusedOnceRef.current = true }
+
+  /** Metni değiştirir ve seçimi geri yükler; karakter sınırı aşılırsa hiçbir şey yapmaz. */
+  const commitEdit = useLatest((next, selStart, selEnd = selStart) => {
+    if (next.length > maxChars) {
+      notifyLatest(`Bu değişiklikle metin ${maxChars} karakter sınırını aşıyor.`, 'error')
+      return false
+    }
+    setText(next)
+    requestAnimationFrame(() => {
+      const t = textRef.current
+      if (!t) return
+      t.focus()
+      try { t.setSelectionRange(selStart, selEnd) } catch { /* yok say */ }
+    })
+    return true
+  })
+
+  /** Metin kutusunun güncel seçimi; kutuya hiç odaklanılmadıysa seçim anlamsızdır → null. */
+  const readSelection = () => {
+    const el = textRef.current
+    if (!el || !focusedOnceRef.current) return null
+    return { value: el.value, start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 }
+  }
+
+  const insertEmotion = useLatest((name) => {
+    lastEmotionRef.current = name
+    insertToken(`[${name}]`)
+  })
+
+  /** Yoğunluk: imleçten önceki son duygu etiketini [biraz X] / [X] / [çok X] yapar; etiket yoksa yenisini ekler. */
+  const applyIntensity = useLatest((word) => {
+    const el = textRef.current
+    const cur = el ? el.value : text
+    const caret = el && focusedOnceRef.current ? (el.selectionEnd ?? cur.length) : cur.length
+    const tag = findEmotionTagBefore(cur, caret, emotionIndex)
+    if (tag) {
+      const next = emotionTagWith(tag, word)
+      if (next === tag.raw) { notifyLatest(`${tag.raw} zaten bu yoğunlukta.`, 'info'); return }
+      const pos = caret >= tag.end ? caret + next.length - tag.raw.length : tag.start + next.length
+      if (commitEdit(cur.slice(0, tag.start) + next + cur.slice(tag.end), pos)) notifyLatest(`${tag.raw} → ${next}`)
+      return
+    }
+    const emo = lastEmotionRef.current || settings.emotion
+    if (!emo) {
+      notifyLatest('Önce "Duygu" grubundan bir duygu ekle; yoğunluk imleçten önceki son duygu etiketine uygulanır.', 'info')
+      return
+    }
+    insertToken(`[${word ? `${word} ` : ''}${emo}]`)
+  })
+
+  /** Vurgu: seçili sözcüğü/öbeği *…* ile sarar; zaten vurguluysa yıldızları kaldırır. */
+  const applyEmphasis = useLatest(() => {
+    const sel = readSelection()
+    const hint = 'Önce metinde vurgulanacak sözcüğü seç (ya da imleci sözcüğün üzerine getir).'
+    if (!sel) { notifyLatest(hint, 'info'); return }
+    const cur = sel.value
+    const r = wordRange(cur, sel.start, sel.end)
+    if (!r) { notifyLatest(hint, 'info'); return }
+    const [s, e] = r
+    if (e - s > 2 && cur[s] === '*' && cur[e - 1] === '*') { // seçim "*çok*" → kaldır
+      commitEdit(cur.slice(0, s) + cur.slice(s + 1, e - 1) + cur.slice(e), s, e - 2)
+      notifyLatest('Vurgu kaldırıldı.')
+      return
+    }
+    if (cur[s - 1] === '*' && cur[e] === '*') { // imleç/seçim *çok* içinde → kaldır
+      commitEdit(cur.slice(0, s - 1) + cur.slice(s, e) + cur.slice(e + 1), s - 1, e - 1)
+      notifyLatest('Vurgu kaldırıldı.')
+      return
+    }
+    if (enclosingBlock(cur, s, e, '[', ']') || enclosingBlock(cur, s, e, '{', '}')) {
+      notifyLatest('Etiketin ya da okunuş bloğunun içine vurgu eklenemez.', 'warn')
+      return
+    }
+    const inner = cur.slice(s, e)
+    if (inner.includes('\n') || inner.includes('*')) {
+      notifyLatest('Vurgu tek satırlık bir sözcük ya da kısa öbek olmalı.', 'warn')
+      return
+    }
+    if (inner.length > EMPHASIS_MAX) {
+      notifyLatest(`Vurgu en fazla ${EMPHASIS_MAX} karakter olabilir; bir sözcük ya da kısa bir öbek seç.`, 'warn')
+      return
+    }
+    commitEdit(`${cur.slice(0, s)}*${inner}*${cur.slice(e)}`, s + 1, e + 1)
+  })
+
+  /** Okunuş: seçili sözcüğü {sözcük|okunuş} yapar (okunuşu sorar); mevcut bloğu düzenler ya da kaldırır. */
+  const applyReading = useLatest(() => {
+    const sel = readSelection()
+    const hint = 'Önce metinde okunuşunu belirleyeceğin sözcüğü seç (ya da imleci üzerine getir).'
+    if (!sel) { notifyLatest(hint, 'info'); return }
+    const cur = sel.value
+    const whole = sel.end - sel.start > 2 && cur[sel.start] === '{' && cur[sel.end - 1] === '}'
+    const blk = whole ? [sel.start, sel.end] : enclosingBlock(cur, sel.start, sel.end, '{', '}')
+    const parsed = blk ? READING_BLOCK_RE.exec(cur.slice(blk[0], blk[1])) : null
+    let range
+    let word
+    let old = ''
+    if (parsed) {
+      range = blk
+      word = parsed[1].trim()
+      old = (parsed[2] ?? '').trim()
+    } else {
+      range = wordRange(cur, sel.start, sel.end)
+      if (!range) { notifyLatest(hint, 'info'); return }
+      if (enclosingBlock(cur, range[0], range[1], '[', ']')) {
+        notifyLatest('Etiketin içindeki sözcüğe okunuş verilemez.', 'warn')
+        return
+      }
+      word = cur.slice(range[0], range[1])
+    }
+    if (!word || /[\n{}|[\]*]/.test(word) || word.length > 60) {
+      notifyLatest('Okunuş için tek satırlık düz bir sözcük ya da kısa öbek seç.', 'warn')
+      return
+    }
+    const answer = window.prompt(
+      `"${word}" nasıl okunsun? Türkçe okunduğu gibi yaz (ör. Shopify → Şopifay).${old ? '\nBoş bırakırsan okunuş kaldırılır.' : ''}`,
+      old,
+    )
+    if (answer == null) return
+    const reading = answer.replace(/[{}|[\]\n]/g, ' ').replace(/\s+/g, ' ').trim()
+    const [a, b] = range
+    if (!reading) {
+      if (parsed) {
+        commitEdit(cur.slice(0, a) + word + cur.slice(b), a, a + word.length)
+        notifyLatest('Okunuş kaldırıldı.')
+      }
+      return
+    }
+    if (reading === word) { notifyLatest('Okunuş sözcükle aynı; değişiklik yapılmadı.', 'info'); return }
+    const token = `{${word}|${reading}}`
+    if (commitEdit(cur.slice(0, a) + token + cur.slice(b), a + token.length)) {
+      notifyLatest(`"${word}" → "${reading}" diye okunacak. Her metinde geçerli olsun istersen Telaffuz sekmesinde sözlüğe ekle.`)
+    }
+  })
 
   function onExample(e) {
     const ex = EXAMPLES.find((x) => x.id === e.target.value)
@@ -1098,6 +1760,8 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
     busyRef.current = true
     const run = ++runRef.current
     const s = settings
+    const f = catalog.features
+    const on = (k) => f[k] !== false // sunucu "yok" dediği katmanı açık göndermeyiz
     const payload = {
       text,
       voice_id: selectedVoice ? selectedVoice.id : null,
@@ -1120,6 +1784,12 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
       master: s.master,
       pause_scale: s.pause_scale,
       variants: s.variants,
+      // v4 katmanları (docs/SOZLESME2.md §9)
+      chat_speak: chatSpeakAvailable(f) && s.chat_speak,
+      fillers: on('fillers') && s.fillers && !(activeStyle && FILLER_OFF_STYLES.has(activeStyle.name)),
+      consistency: on('consistency') && s.consistency,
+      qc: on('qc') && s.qc,
+      subtitles: on('subtitles') && s.subtitles,
     }
     jobRef.current = null
     chainActiveRef.current = false
@@ -1236,7 +1906,8 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
           </div>
 
           {ui.tags && (
-            <TagBox id={tagsId} emotions={catalog.emotions} nonverbal={catalog.nonverbal} pauses={catalog.pauses} onInsert={insertToken} />
+            <TagBox id={tagsId} catalog={catalog} recordedNv={recordedNv} onInsert={insertToken} onEmotion={insertEmotion}
+              onIntensity={applyIntensity} onEmphasis={applyEmphasis} onReading={applyReading} />
           )}
 
           <div className="row">
@@ -1264,7 +1935,8 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
           <VoiceInfo id={voiceInfoId} voice={selectedVoice} />
 
           <NaturalnessPanel settings={settings} levels={catalog.levels} features={catalog.features} language={language}
-            voicePauseScale={voicePauseScale} open={ui.natural} onToggle={onToggleNatural} onChange={setField} />
+            voicePauseScale={voicePauseScale} fillersBlockedBy={fillersBlockedBy} open={ui.natural} onToggle={onToggleNatural}
+            onChange={setField} />
           <AdvancedPanel settings={settings} seed={seed} onSeed={setSeed} open={ui.advanced} onToggle={onToggleAdvanced}
             onChange={setField} />
 
@@ -1282,7 +1954,7 @@ export default function Generate({ voices = [], languages, maxChars = 5000, heal
           )
         ) : result ? (
           <VariantResult key={result.id} result={result} languages={langs} autoPlay={resultAutoPlay} favs={favs}
-            onFavorite={markFavorite} onRegenerate={regenerate} onPinSeed={pinSeed} />
+            onFavorite={markFavorite} onRegenerate={regenerate} onPinSeed={pinSeed} notify={notifyLatest} />
         ) : (
           <p className="muted">Üretilen ses burada görünecek.</p>
         )}

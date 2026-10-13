@@ -722,6 +722,198 @@ ul.tips { list-style: none; }
 .countdown b { color: var(--accent-2-text); font-size: 15px; }
 @keyframes blink { to { visibility: hidden; } }
 
+/* ---------- ortak küçük yardımcılar (v4) ---------- */
+
+.ok-text { color: var(--ok); }
+/* Geniş alanda iki sütunlu onay kutusu listesi: <div class="checklist cols">…</div> */
+.checklist.cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 16px; }
+
+/* ---------- diyalog ---------- */
+
+/* Konuşmacı renkleri: 8 renk + anlatıcı. .spk-N yalnızca --_spk'yi ayarlar; rozet, sıra kenarı vb. onu kullanır
+   (iç içe öğeler de miras alır). Örnek: <span class="speaker-badge spk-3">Ayşe</span>
+   · <button class="turn spk-3 active">…</button> · <span class="speaker-badge small spk-narrator">Anlatıcı</span>
+   Metin rengi temanın metin rengiyle karıştırılır → koyu ve açık temada okunur. */
+:root {
+  --spk-0: #8b5cf6; --spk-1: #06b6d4; --spk-2: #eab308; --spk-3: #ec4899;
+  --spk-4: #22c55e; --spk-5: #3b82f6; --spk-6: #f97316; --spk-7: #f43f5e;
+  --spk-narrator: #94a3b8;
+}
+.spk-0 { --_spk: var(--spk-0); }
+.spk-1 { --_spk: var(--spk-1); }
+.spk-2 { --_spk: var(--spk-2); }
+.spk-3 { --_spk: var(--spk-3); }
+.spk-4 { --_spk: var(--spk-4); }
+.spk-5 { --_spk: var(--spk-5); }
+.spk-6 { --_spk: var(--spk-6); }
+.spk-7 { --_spk: var(--spk-7); }
+.spk-narrator { --_spk: var(--spk-narrator); }
+
+.speaker-badge {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; overflow: hidden; vertical-align: middle;
+  padding: 3px 10px 3px 8px; border-radius: var(--pill); border: 1px solid var(--_spk, var(--spk-narrator));
+  background: var(--bg-3); color: var(--text); font-size: 12.5px; font-weight: 700; line-height: 1.3; white-space: nowrap;
+}
+.speaker-badge::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--_spk, var(--spk-narrator)); }
+.speaker-badge.small { padding: 1px 8px 1px 6px; gap: 5px; font-size: 11.5px; }
+.speaker-badge.small::before { width: 6px; height: 6px; }
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  .speaker-badge {
+    color: color-mix(in srgb, var(--_spk, var(--spk-narrator)) 62%, var(--text));
+    background: color-mix(in srgb, var(--_spk, var(--spk-narrator)) 15%, transparent);
+    border-color: color-mix(in srgb, var(--_spk, var(--spk-narrator)) 45%, transparent);
+  }
+}
+
+/* Senaryo metin alanı */
+.script-area { min-height: 230px; font-size: 14.5px; line-height: 1.65; tab-size: 4; }
+/* Katlanır bölüm başlığındaki uzun özet tek satırda kalsın (başlık sıkışmasın) */
+.dialog .panel > summary > b { flex: none; }
+.dialog .panel > summary > .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Geniş ekranda Sonuç kartı yapışkan: uzun senaryo sütununda aşağıdayken ilerleme ve sonuç görünür kalır */
+@media (min-width: 821px) {
+  .grid.two.dialog { align-items: start; }
+  .grid.two.dialog > .card:last-child {
+    position: sticky; top: 58px; max-height: calc(100vh - 74px); overflow-y: auto; overscroll-behavior: contain;
+  }
+}
+
+/* Konuşmacı eşleme paneli:
+   <div class="speaker-map"><div class="speaker-map-head">…</div>
+     <ul class="speaker-rows"><li class="speaker-row [unmapped|idle]"><div class="speaker-name">…</div><select/><select/><span class="badge"/></li></ul></div> */
+.speaker-map {
+  container-type: inline-size;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2);
+}
+.speaker-map > p { margin: 0; }
+.speaker-map-head, .speaker-row {
+  display: grid; grid-template-columns: minmax(92px, 1fr) minmax(0, 1.35fr) minmax(0, 1.25fr) 70px; gap: 8px; align-items: center;
+}
+.speaker-map-head { padding: 0 9px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.speaker-map-head > :last-child, .speaker-row > .badge { justify-self: end; }
+.speaker-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.speaker-row {
+  padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
+  transition: border-color .15s, background-color .15s, opacity .15s;
+}
+.speaker-row.unmapped { border-color: var(--warn); border-style: dashed; }
+.speaker-row.idle { opacity: .72; }
+.speaker-row select { width: 100%; padding: 7px 9px; font-size: 13px; }
+.speaker-name { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.speaker-empty { margin: 0; }
+@container (max-width: 470px) {
+  .speaker-map-head { display: none; }
+  .speaker-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .speaker-row > select { grid-column: 1 / -1; }
+  .speaker-row > .badge { grid-row: 1; grid-column: 2; }
+}
+
+/* Sıralar (sonuç): <ul class="turn-list"><li data-turn="0"><button class="turn spk-2 [active]">
+     <span class="turn-head"><span class="speaker-badge small">Ayşe</span><span class="turn-time">00:07.3</span>…</span>
+     <span class="turn-text">… <span class="turn-tag">[gülme]</span></span></button></li></ul> */
+.turn-list {
+  position: relative; list-style: none; margin: 0; padding: 0 2px 0 0;
+  display: flex; flex-direction: column; gap: 4px; max-height: 440px; overflow-y: auto; overscroll-behavior: contain;
+}
+.turn {
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 100%; min-width: 0;
+  padding: 8px 10px 8px 12px; border: 1px solid var(--line); border-left: 3px solid var(--_spk, var(--spk-narrator)); border-radius: 10px;
+  background: var(--bg-2); color: var(--text-2); font: inherit; font-size: 13.5px; line-height: 1.5; text-align: left; cursor: pointer;
+  transition: background-color .15s, border-color .15s, box-shadow .15s, color .15s;
+}
+.turn:hover { background: var(--bg-3); }
+.turn.active {
+  color: var(--text); background: var(--accent-bg); border-color: var(--accent); border-left-color: var(--_spk, var(--accent));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  .turn.active {
+    background: color-mix(in srgb, var(--_spk, var(--accent)) 13%, var(--bg-2));
+    border-color: color-mix(in srgb, var(--_spk, var(--accent)) 55%, transparent);
+    border-left-color: var(--_spk, var(--accent));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--_spk, var(--accent)) 45%, transparent);
+  }
+}
+.turn-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.turn-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.turn.active .turn-time { color: var(--text); font-weight: 600; }
+.turn-voice { margin-left: auto; }
+.turn-text { overflow-wrap: anywhere; }
+.turn-tag { color: var(--muted); font-size: .92em; }
+
+/* Sıradan dinleme çubuğu (sıraya tıklayınca): <div class="turn-player">▶ · durum · ■</div> */
+.turn-player {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--accent-bg); animation: rise .2s var(--ease);
+}
+.turn-player-status { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-2); }
+
+/* Altyazı */
+.row.subtitle-bar { align-items: center; gap: 6px; }
+.subtitle-preview {
+  margin: 6px 0 0; padding: 10px 12px; max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg-3); color: var(--text-2);
+  font-family: var(--mono); font-size: 12px; line-height: 1.5;
+}
+.dialog-help { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+/* ---------- telaffuz sözlüğü ---------- */
+
+/* İki biçim de desteklenir:
+   1) tablo: <table class="lex-table"><thead>…</thead><tbody><tr class="lex-row">…</tr></tbody></table>
+   2) liste: <ul class="lex-table"><li class="lex-row"><span>sözcük</span><span>okunuş</span>…</li></ul> */
+.lex-new { margin-bottom: 12px; }
+/* Kaydırılabilir tablo kabı (dar ekranda yatay kaydırma; başlık satırı yapışkan kalır): <div class="table-wrap"><table>…</table></div> */
+.table-wrap { max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.table-wrap > table { border: 0; }
+table.lex-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+/* Yalnızca sütun başlıkları yapışkan/soluk; satır başlığı (<th scope="row">) sözcük hücresi gibi görünür */
+table.lex-table thead th {
+  position: sticky; top: 0; z-index: 1; padding: 8px 10px; text-align: left;
+  background: var(--bg-2); color: var(--muted); font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--line);
+}
+table.lex-table td, table.lex-table tbody th {
+  padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; overflow-wrap: anywhere; text-align: left;
+}
+table.lex-table tbody th { font-weight: 600; color: var(--text); }
+table.lex-table tr:last-child > * { border-bottom: 0; }
+tr.lex-row:hover > * { background: var(--bg-2); }
+tr.lex-row td:last-child, .lex-actions { text-align: right; white-space: nowrap; }
+.lex-word { font-weight: 600; color: var(--text); }
+.lex-word .badge { margin-left: 4px; padding: 1px 7px; font-size: 11px; }
+.lex-reading { color: var(--text-2); }
+/* Ses kapsamında gösterilen genel girdi (sese özel değil) */
+tr.lex-row.inherited td { color: var(--text-2); }
+tr.lex-row.inherited .lex-word b { font-weight: 600; }
+.lex-table:not(table) { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lex-row:not(tr) {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: 8px; align-items: center;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); font-size: 13.5px;
+}
+.lex-row:not(tr):hover { border-color: var(--line-2); }
+.lex-row input, .lex-row select { width: 100%; padding: 6px 9px; font-size: 13px; }
+.lex-row .muted { overflow-wrap: anywhere; }
+/* Deneme alanı: <div class="lex-test"><textarea/>…<p class="quote">sonuç</p></div> */
+.lex-test { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px dashed var(--line-2); border-radius: 12px; background: var(--bg-2); }
+.lex-test .quote { border-left-color: var(--accent-2); }
+.lex-test mark, .lex-test .changed { background: var(--accent-2-bg); color: var(--accent-2-text); border-radius: 4px; padding: 0 2px; }
+@media (max-width: 480px) {
+  .lex-row:not(tr) { grid-template-columns: minmax(0, 1fr) auto; }
+  .turn-list { max-height: 360px; }
+}
+
+/* ---------- v4: Seslendir · Sesler istekleri (docs/UI_SINIFLAR_v4.md) ---------- */
+
+/* Kalite kontrol nedenleri ("Cümle cümle" listesi) ve düşük puanlı (<60) parça */
+.qc-reasons { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.item.qc-low { border-color: var(--warn); background: var(--warn-bg); }
+/* Ses kartı: "Kaydı iyileştir" düğmesi + öneri nedeni ortada hizalı; önce/sonra halkaları */
+.enhance-bar { align-items: center; }
+.enhance-compare { gap: 10px; }
+/* Etiket kutusundaki sayı girişleri ("+ [hız:0.9]") biraz daha dar */
+.tag-control .num-sm { width: 70px; }
+
 /* ---------- hareket ---------- */
 
 @keyframes spin { to { transform: rotate(360deg); } }

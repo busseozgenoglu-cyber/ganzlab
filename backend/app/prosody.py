@@ -451,6 +451,9 @@ def _breath_instance(breath, sr: int, rng: np.random.Generator) -> np.ndarray:
     return b.astype(np.float32)
 
 
+LAST_JOIN_GAPS_MS: list[int] = []   # son join_natural çağrısının gerçek boşlukları (nefesle uzamış hali; zaman çizelgesi için)
+
+
 def join_natural(pieces: list[np.ndarray], pauses_ms: list[int], sr: int, *, room_tone: np.ndarray | None = None,
                  breath: np.ndarray | None = None, breath_plan: list[bool] | None = None,
                  crossfade_ms: int = 15) -> np.ndarray:
@@ -473,6 +476,7 @@ def join_natural(pieces: list[np.ndarray], pauses_ms: list[int], sr: int, *, roo
         return np.zeros(0, dtype=np.float32)
     fade_ms = max(2, int(round(_to_float(crossfade_ms, 15.0))))
     if n == 1:
+        LAST_JOIN_GAPS_MS[:] = [0]
         return fade(parts[0], sr, fade_ms).astype(np.float32)
 
     pauses = list(pauses_ms) if pauses_ms is not None else []
@@ -525,6 +529,7 @@ def join_natural(pieces: list[np.ndarray], pauses_ms: list[int], sr: int, *, roo
         g0 = starts[gi] + lens[gi]
         off = g0 + (gaps[gi] - b.size) // 2
         out[off: off + b.size] += b
+    LAST_JOIN_GAPS_MS[:] = [int(round(g * 1000 / sr)) for g in gaps[: max(0, n - 1)]] + [0]
     return out
 
 

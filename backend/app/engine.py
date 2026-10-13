@@ -1,16 +1,19 @@
-"""Chatterbox Multilingual (Resemble AI, MIT) üzerine SesKlon üretim motoru — v3 "doğallık" sürümü.
+"""Chatterbox Multilingual (Resemble AI, MIT) üzerine SesKlon üretim motoru — v4.
 
 İnsan gibi konuşan bir çıktı için katmanlar sırayla:
-1. Metin: Türkçe normalizasyon (sayı, para, saat, kısaltma, marka okunuşu) + konuşma dili (off/light/full).
-2. Bölümleme: [etiket] duygu bölümleri; noktalama ve isteğe bağlı içerik çıkarımına göre cümle duygusu.
+1. Metin: satır içi okunuş {yazılış|okunuş}, sohbet kısaltmaları, telaffuz sözlüğü, Türkçe normalizasyon,
+   konuşma dili (off/light/full), isteğe bağlı konuşma dolguları.
+2. Bölümleme: [etiket] duygu bölümleri (yoğunluk, karışım, kayış, hız/perde kontrolleri), sözsüz tepkiler,
+   *vurgu*; noktalama ve isteğe bağlı içerik çıkarımına göre cümle duygusu.
 3. Referans: her bölüm için duyguya uygun kayıt (kullanıcının o duygu için kaydı → türetilmiş → nötr).
-4. Üretim: duyguya göre vurgu/cfg/sıcaklık; süresi şüpheli parçalar yeniden üretilir, halüsinasyon kırpılır.
-5. Prozodi: bağlama göre duraklama planı (bağlaç, soru-cevap, uzun cümle), kişinin ölçülen doğal ritmi,
-   cümle arası nefes (referans kayıttan gerçek nefes ya da sentetik), sessizlik yerine oda tonu.
-6. Mastering: -16 LUFS yayın seviyesi, hafif EQ ve de-ess, gerçek tepe sınırı.
+4. Üretim: duyguya göre vurgu/cfg/sıcaklık; kalite kontrol (halüsinasyon, tekrar, takılma) → farklı tohumla
+   yeniden üretim; gerçek tepki kayıtları ([gülme] → kullanıcının kendi gülmesi).
+5. Tutarlılık: parçalar arası tını (LTAS) ve seviye eşitleme.
+6. Prozodi: bağlama göre duraklama planı, kişinin ölçülen doğal ritmi, nefes, oda tonu.
+7. Mastering: -16 LUFS, hafif EQ ve de-ess, gerçek tepe sınırı. Zaman çizelgesi (altyazı) üretilir.
+Diyalog modu: "Ayşe: …" satırları konuşmacı başına sesle üretilir, sıra alma duraklamalarıyla birleştirilir.
 
 Model ilk istekte (veya PRELOAD ile arka planda) yüklenir; tek GPU için üretimler kilitle sıraya alınır.
-İş kuyruğundan gelen `job` ile parça parça canlı önizleme ve iptal desteklenir.
 """
 from __future__ import annotations
 
@@ -29,13 +32,19 @@ import soundfile as sf
 
 from . import audio, config, prosody
 from .colloquial import colloquial_report, colloquial_tr, normalize_level
-from .emotion import PROFILES, EmotionProfile, derive_reference, infer_emotion, parse_tagged_text, post_process
+from .emotion import (PROFILES, EmotionProfile, derive_reference, effective_profile, infer_emotion,
+                      interpolate_profile, nonverbal_fallback, parse_tagged_text, plan_emphasis, post_process)
 from .textnorm import normalize
 
 log = logging.getLogger("sesklon.engine")
 
 _SENT_END = re.compile(r"(?<=[.!?]['\"»”’)])\s+|(?<=[.!?])\s+")
 PAUSE_MS = {"paragraph": 650, ".": 380, "!": 420, "?": 450, "...": 550, ";": 300, ":": 280, ",": 180, "": 250}
+MAX_TAG_PAUSE_MS = 10_000
+EMPHASIS_PAUSE_BEFORE_MS = 110
+EMPHASIS_PAUSE_AFTER_MS = 40
+NONVERBAL_PAUSE_BEFORE_MS = 90
+NONVERBAL_PAUSE_AFTER_MS = 140
 
 ProgressFn = Callable[[int, int, str], None]
 PartialFn = Callable[[int, np.ndarray, int, str], None]   # (indeks, ses, sr, metin)
@@ -52,9 +61,17 @@ class Chunk:
     paragraph_end: bool = False
     emphasis: list[str] = field(default_factory=list)
     tag_pause_ms: int = 0    # [nefes] / [2 sn] gibi etiketlerden gelen, BİREBİR uygulanacak ek süre (bu parçadan sonra)
-
-
-MAX_TAG_PAUSE_MS = 10_000
+    # v4
+    intensity: float = 1.0
+    blend: list[str] = field(default_factory=list)
+    rate: float | None = None          # [hız:0.9]
+    pitch: float | None = None         # [perde:+1] yarım ton
+    arc_t: float | None = None         # kayış konumu 0..1 (None = kayış yok)
+    arc_to: str | None = None
+    nonverbal: str | None = None       # "gülme" → gerçek tepki parçası (text boş)
+    speaker: str | None = None
+    emphasized: bool = False           # bu parça bir *vurgu* parçası
+    turn_end: bool = False             # diyalogda sıra sonu: duraklaması sıra alma planından gelir, ezilmez
 
 
 def _punct_of(s: str) -> str:
@@ -77,27 +94,109 @@ def _end_pause(s: str, paragraph_end: bool) -> int:
     return PAUSE_MS.get(s.rstrip()[-1:] if s.strip() else "", PAUSE_MS[""])
 
 
-def split_text(text: str, max_chars: int, normalizer=None, auto_emotion: bool = False) -> list[Chunk]:
-    """Etiket bölümlerini ayırır (ham metinde), her bölümü normalize edip cümlelere böler."""
+def split_text(text: str, max_chars: int, normalizer=None, auto_emotion: bool = False,
+               keep_nonverbal: bool = False, emphasis: bool = True,
+               recorded_nonverbal: set[str] | frozenset[str] | None = None) -> list[Chunk]:
+    """Etiket bölümlerini ayırır (ham metinde), her bölümü normalize edip cümlelere böler.
+
+    keep_nonverbal=True: [gülme] gibi tepkiler metne gömülmek yerine ayrı (sessiz metinli) parça olur; motor
+    kullanıcının gerçek kaydı varsa onu, yoksa okunuş metnini ("Hahaha!") komşu parçaya gömer.
+    emphasis=True: *vurgulu* sözcükler ayrı parçaya ayrılır (daha güçlü üretim + mikro duraklama).
+    """
     chunks: list[Chunk] = []
-    for seg in parse_tagged_text(text):
-        seg_text = normalizer(seg.text) if normalizer else seg.text
+    if keep_nonverbal and recorded_nonverbal is not None and not recorded_nonverbal:
+        keep_nonverbal = False          # kayıt yoksa tepkiler v3'teki gibi satır içinde kalır (tek başına üretim halüsinasyon yapar)
+    pending_fallback = ""               # kaydı olmayan tepkinin okunuşu → sonraki parçanın başına
+    for seg in parse_tagged_text(text, keep_nonverbal=keep_nonverbal):
+        if getattr(seg, "nonverbal", None) and recorded_nonverbal is not None and seg.nonverbal not in recorded_nonverbal:
+            fb = getattr(seg, "nonverbal_reads", "") or nonverbal_fallback(seg.nonverbal) or ""
+            if fb:
+                pending_fallback = f"{pending_fallback} {fb}".strip()
+            if seg.pause_before_ms or seg.pause_after_ms:
+                (chunks[-1] if chunks else None) and setattr(chunks[-1], "tag_pause_ms", chunks[-1].tag_pause_ms + seg.pause_before_ms + seg.pause_after_ms)
+            continue
+        if getattr(seg, "nonverbal", None):
+            nv = Chunk("", NONVERBAL_PAUSE_AFTER_MS, seg.emotion, NONVERBAL_PAUSE_BEFORE_MS, "", False,
+                       nonverbal=seg.nonverbal, speaker=getattr(seg, "speaker", None),
+                       intensity=float(getattr(seg, "intensity", 1.0) or 1.0))
+            if seg.pause_before_ms:
+                (chunks[-1] if chunks else nv).tag_pause_ms += seg.pause_before_ms
+            nv.tag_pause_ms += seg.pause_after_ms
+            chunks.append(nv)
+            continue
+        raw_text = seg.text
+        if pending_fallback:
+            raw_text = f"{pending_fallback} {raw_text}".strip()
+            pending_fallback = ""
+        seg_text = normalizer(raw_text) if normalizer else raw_text
         seg_chunks = _split_segment(seg_text, max_chars, seg.emotion, auto_emotion)
         if not seg_chunks:
             continue
-        # Etiket duraklamaları ([nefes], [1.5 sn]…) birebir uygulanır; önceki parçanın sonuna eklenir.
-        if seg.pause_before_ms:
-            if chunks:
-                chunks[-1].tag_pause_ms += seg.pause_before_ms
-            else:
-                seg_chunks[0].pause_before_ms += seg.pause_before_ms
+        # Etiket duraklamaları ([nefes], [1.5 sn]…) birebir uygulanır; önceki parçanın sonuna eklenir
+        # (metnin en başındaki duraklama v3'teki gibi yok sayılır).
+        if seg.pause_before_ms and chunks:
+            chunks[-1].tag_pause_ms += seg.pause_before_ms
         seg_chunks[-1].tag_pause_ms += seg.pause_after_ms
-        emphasis = list(getattr(seg, "emphasis_words", []) or [])
-        if emphasis:
-            for c in seg_chunks:
-                c.emphasis = [w for w in emphasis if w and w in c.text]
+        n = len(seg_chunks)
+        for i, c in enumerate(seg_chunks):
+            c.intensity = float(getattr(seg, "intensity", 1.0) or 1.0)
+            c.blend = list(getattr(seg, "blend", []) or [])
+            c.rate = getattr(seg, "rate", None)
+            c.pitch = getattr(seg, "pitch", None)
+            c.speaker = getattr(seg, "speaker", None)
+            if getattr(seg, "arc_to", None):
+                c.arc_to = seg.arc_to
+                c.arc_t = (i + 1) / n          # bölüm boyunca hedef duyguya kayış
+        emphasis_words = list(getattr(seg, "emphasis_words", []) or []) if emphasis else []
+        if emphasis_words and normalizer is not None:
+            normed = []
+            for w in emphasis_words:
+                try:
+                    nw = normalizer(w).strip().strip(".,!?;:")
+                except Exception:  # noqa: BLE001
+                    nw = w
+                normed.append(nw or w)
+            emphasis_words = normed
+        if emphasis_words:
+            seg_chunks = _apply_emphasis(seg_chunks, emphasis_words)
         chunks.extend(seg_chunks)
+    if pending_fallback:
+        if chunks and chunks[-1].text and not chunks[-1].nonverbal:
+            chunks[-1].text = f"{chunks[-1].text} {pending_fallback}".strip()
+            chunks[-1].punct = _punct_of(chunks[-1].text)
+        else:
+            chunks.append(Chunk(pending_fallback, PAUSE_MS["!"], None, 0, _punct_of(pending_fallback)))
     return chunks
+
+
+def _apply_emphasis(chunks: list[Chunk], words: list[str]) -> list[Chunk]:
+    """*vurgulu* sözcükleri kendi parçalarına ayırır; vurgulu parça öncesi/sonrası mikro duraklama."""
+    out: list[Chunk] = []
+    for c in chunks:
+        parts = plan_emphasis(c.text, words)
+        if len(parts) <= 1 and not (parts and parts[0][1]):
+            out.append(c)
+            continue
+        for k, (txt, emph) in enumerate(parts):
+            if not txt.strip():
+                continue
+            last = k == len(parts) - 1
+            t_ = txt.strip()
+            if last:
+                pause = c.pause_after_ms
+            elif t_.endswith((".", "!", "?", "...")):
+                pause = _end_pause(t_, False)              # cümle sonu: gerçek cümle duraklaması
+            elif t_.endswith((",", ";", ":")):
+                pause = PAUSE_MS[t_[-1]]
+            else:
+                pause = EMPHASIS_PAUSE_AFTER_MS if emph else EMPHASIS_PAUSE_BEFORE_MS
+            piece = Chunk(t_, pause, c.emotion, 0, _punct_of(txt), c.paragraph_end if last else False,
+                          intensity=c.intensity, blend=list(c.blend), rate=c.rate, pitch=c.pitch, arc_t=c.arc_t,
+                          arc_to=c.arc_to, speaker=c.speaker, emphasized=bool(emph))
+            if last:
+                piece.tag_pause_ms = c.tag_pause_ms
+            out.append(piece)
+    return out
 
 
 def _split_segment(text: str, max_chars: int, emotion: str | None, auto_emotion: bool) -> list[Chunk]:
@@ -194,12 +293,14 @@ PUNCT_DELTA = {
 
 @dataclass
 class VoiceRefs:
-    """Bir sesin referans dosyaları: nötr + duygu başına kayıtlar + (varsa) analiz."""
+    """Bir sesin referans dosyaları: nötr + duygu başına kayıtlar + gerçek tepkiler + (varsa) analiz."""
     voice_id: str
     base: Path | None
     by_emotion: dict[str, Path]
-    analysis: dict | None = None     # analysis.analyze_reference çıktısı (pauses.scale, breaths…)
+    analysis: dict | None = None      # analysis.analyze_reference çıktısı (pauses.scale, breaths…)
     pause_scale: float | None = None  # kullanıcının sese elle verdiği ritim çarpanı (analizi ezer)
+    nonverbal: dict[str, Path] = field(default_factory=dict)   # "gülme" → kayıt
+    name: str = ""
 
 
 @dataclass
@@ -220,6 +321,12 @@ class SynthOptions:
     room_tone: bool = True
     master: bool = True
     pause_scale: float = 1.0
+    consistency: bool = True
+    qc: bool = True
+    fillers: bool = False
+    chat_speak: bool = True
+    subtitles: bool = True
+    style: str | None = None
 
 
 class Engine:
@@ -233,6 +340,9 @@ class Engine:
         self.load_error: str | None = None
         self.model_name = f"chatterbox-multilingual-{config.T3_MODEL}"
         self._ref_cache: dict[str, tuple[float, np.ndarray | None, np.ndarray | None]] = {}
+        self._ltas_cache: dict[str, tuple[float, np.ndarray]] = {}
+        self._cps_history: dict[str, list[tuple[int, float]]] = {}   # ses → (karakter, saniye) geçmişi (QC eşiği)
+        self._default_conds = None
         _patch_torch_load_for(self.device)
         log.info("SesKlon motoru hazır • cihaz=%s • model=%s", self.device, self.model_name)
 
@@ -351,6 +461,65 @@ class Engine:
             log.warning("Oda tonu / nefes çıkarılamadı: %s", e)
             return None, None
 
+    def _voice_ltas(self, refs: VoiceRefs | None, sr: int) -> np.ndarray | None:
+        """Referans sesin uzun dönem spektrumu (tutarlılık hedefi), önbellekli."""
+        if refs is None or refs.base is None or not refs.base.exists():
+            return None
+        try:
+            from .consistency import ltas
+
+            key = str(refs.base)
+            mtime = refs.base.stat().st_mtime
+            cached = self._ltas_cache.get(key)
+            if cached and cached[0] == mtime:
+                return cached[1]
+            wav, fsr = sf.read(str(refs.base), dtype="float32", always_2d=False)
+            if wav.ndim > 1:
+                wav = wav.mean(axis=1)
+            if fsr != sr:
+                wav = audio.resample(wav, fsr, sr)
+            target = ltas(wav, sr)
+            self._ltas_cache[key] = (mtime, target)
+            if len(self._ltas_cache) > 64:
+                self._ltas_cache.pop(next(iter(self._ltas_cache)))
+            return target
+        except Exception as e:  # noqa: BLE001
+            log.warning("Referans LTAS hesaplanamadı: %s", e)
+            return None
+
+    # ---------- metin ön işleme ----------
+    @staticmethod
+    def _make_normalizer(language: str, level: str, voice_id: str | None, chat_speak: bool, fillers: bool,
+                         style: str | None, seed: int | None, changes: list[dict], lex_changes: list[dict]):
+        """Bölüm metnini modele hazırlayan zincir: okunuş → kısaltma → sözlük → normalizasyon → konuşma dili → dolgu."""
+        try:
+            from . import lexicon
+        except Exception:  # noqa: BLE001
+            lexicon = None
+
+        def _norm(seg: str) -> str:
+            out = seg
+            if lexicon is not None:
+                try:
+                    out = lexicon.apply_inline_readings(out)
+                    if chat_speak and language == "tr":
+                        out = lexicon.expand_chat_speak(out)
+                    if language == "tr":
+                        lex_changes.extend(lexicon.lexicon_report(out, voice_id, language))
+                        out = lexicon.apply_lexicon(out, language, voice_id)
+                except Exception as e:  # noqa: BLE001
+                    log.debug("Sözlük katmanı atlandı: %s", e)
+            out = normalize(out, language)
+            if level != "off" and language == "tr":
+                try:
+                    changes.extend(colloquial_report(out, level))
+                except Exception:  # noqa: BLE001
+                    pass
+                out = colloquial_tr(out, level)
+            return out
+
+        return _norm
+
     # ---------- üretim ----------
     def synthesize(
         self,
@@ -373,32 +542,221 @@ class Engine:
         room_tone: bool = True,
         master: bool = True,
         pause_scale: float = 1.0,
+        consistency: bool = True,
+        qc: bool = True,
+        fillers: bool = False,
+        chat_speak: bool = True,
+        subtitles: bool = True,
+        style: str | None = None,
         partial: PartialFn | None = None,
         check_cancelled: CheckFn | None = None,
     ) -> tuple[np.ndarray, int, dict]:
-        """Döndürür: (ses, örnekleme hızı, rapor {normalized_text, chunks:[...], colloquial_changes, loudness…})."""
+        """Döndürür: (ses, örnekleme hızı, rapor {normalized_text, chunks, colloquial_changes, prosody, qc, timeline…})."""
         if isinstance(refs, (str, Path)):
             refs = VoiceRefs("adhoc", Path(refs), {})
         level = normalize_level(colloquial)
         changes: list[dict] = []
-
-        def _norm(seg: str) -> str:
-            out = normalize(seg, language)
-            if level != "off" and language == "tr":
-                try:
-                    changes.extend(colloquial_report(out, level))
-                except Exception:  # noqa: BLE001
-                    pass
-                out = colloquial_tr(out, level)
-            return out
-
-        chunks = split_text(text, config.CHUNK_CHARS, normalizer=_norm, auto_emotion=auto_emotion)
+        lex_changes: list[dict] = []
+        _norm = self._make_normalizer(language, level, refs.voice_id if refs else None, chat_speak, fillers, style,
+                                      seed, changes, lex_changes)
+        text = self._with_fillers(text, language, fillers, style, seed)
+        chunks = split_text(text, config.CHUNK_CHARS, normalizer=_norm, auto_emotion=auto_emotion, keep_nonverbal=True,
+                            recorded_nonverbal=self._recorded_nonverbal(refs))
         if not chunks:
             raise ValueError("Metin boş.")
-        report: dict = {"normalized_text": " ".join(c.text for c in chunks), "chunks": [],
-                        "colloquial_level": level, "colloquial_changes": _dedupe_changes(changes)}
+        report: dict = {"normalized_text": " ".join(c.text for c in chunks if c.text), "chunks": [],
+                        "colloquial_level": level, "colloquial_changes": _dedupe_changes(changes),
+                        "lexicon_changes": _dedupe_changes(lex_changes), "nonverbal_used": []}
+        total_scale = self._pause_scale(refs, pause_scale)
 
-        # Kişinin doğal ritmi: sese elle girilmiş pause_scale varsa o, yoksa analizden ölçülen; × kullanıcının çarpanı
+        with self._lock:
+            model = self.tts()
+            sr = int(model.sr)
+            base_kwargs = _filter_kwargs(model.generate, {
+                "language_id": language, "exaggeration": float(exaggeration),
+                "cfg_weight": float(cfg_weight), "temperature": float(temperature),
+            })
+            pieces, base_pauses, qc_reports = self._render_chunks(
+                model, sr, chunks, refs, base_kwargs, seed, speed, punctuation_emotion, emotion_refs, emotion_fx,
+                qc, progress, partial, check_cancelled, report)
+            if check_cancelled:
+                check_cancelled()
+            wav, info = self._finish(pieces, base_pauses, chunks, sr, refs, total_scale, breaths, room_tone, master,
+                                     consistency, seed, progress, len(chunks), report)
+            report["prosody"] = info
+            if qc:
+                try:
+                    from .qc import summarize
+
+                    indexed = [{"index": i, **r} for i, r in enumerate(qc_reports) if r]
+                    report["qc"] = indexed
+                    report["qc_summary"] = summarize(indexed)
+                except Exception:  # noqa: BLE001
+                    pass
+            if subtitles:
+                report["timeline"] = self._timeline(report["chunks"], info, sr)
+            return wav, sr, report
+
+    # ---------- diyalog ----------
+    def synthesize_dialog(
+        self,
+        text: str,
+        speakers: dict[str, VoiceRefs | None],
+        narrator: VoiceRefs | None = None,
+        language: str = "tr",
+        *,
+        default_emotions: dict[str, str] | None = None,
+        progress: ProgressFn | None = None,
+        partial: PartialFn | None = None,
+        check_cancelled: CheckFn | None = None,
+        **opts: Any,
+    ) -> tuple[np.ndarray, int, dict]:
+        """Çok konuşmacılı metin: her sıra kendi sesiyle üretilir, sıra alma duraklamalarıyla birleştirilir."""
+        from .dialog import merge_turn_report, parse_dialog, plan_turn_pauses
+
+        turns = [t for t in parse_dialog(text) if t.text.strip()]
+        if not turns:
+            raise ValueError("Diyalog boş.")
+        o = SynthOptions(language=language, **{k: v for k, v in opts.items() if k in SynthOptions.__dataclass_fields__})
+        level = normalize_level(o.colloquial)
+        seed = o.seed
+        default_emotions = default_emotions or {}
+        tr_lower = __import__("app.tr", fromlist=["tr_lower"]).tr_lower
+        spk_map = {tr_lower(k): v for k, v in speakers.items()}
+        emo_map = {tr_lower(k): v for k, v in default_emotions.items()}
+
+        # Her sıranın parçaları (konuşmacı sesine göre normalize edilir)
+        all_chunks: list[Chunk] = []
+        turn_of_chunk: list[int] = []
+        refs_of_turn: list[VoiceRefs | None] = []
+        changes: list[dict] = []
+        lex_changes: list[dict] = []
+        for t in turns:
+            refs = narrator if t.speaker is None else spk_map.get(tr_lower(t.speaker), narrator)
+            refs_of_turn.append(refs)
+            ttext = self._with_fillers(t.text, language, o.fillers, o.style, (seed or 0) + t.index)
+            emo = emo_map.get(tr_lower(t.speaker)) if t.speaker else None
+            if emo and not _starts_with_emotion_tag(ttext):
+                ttext = f"[{emo}] {ttext}"
+            _norm = self._make_normalizer(language, level, refs.voice_id if refs else None, o.chat_speak, o.fillers,
+                                          o.style, seed, changes, lex_changes)
+            tchunks = split_text(ttext, config.CHUNK_CHARS, normalizer=_norm, auto_emotion=o.auto_emotion, keep_nonverbal=True,
+                                 recorded_nonverbal=self._recorded_nonverbal(refs))
+            for c in tchunks:
+                c.speaker = t.speaker
+            if tchunks:
+                tchunks[-1].turn_end = True
+            elif all_chunks:
+                # Yalnızca duraklama etiketi içeren sıra ("Ayşe: [2 sn]"): süresi önceki parçaya eklenir
+                all_chunks[-1].tag_pause_ms += _pause_only_ms(ttext)
+            all_chunks.extend(tchunks)
+            turn_of_chunk.extend([t.index] * len(tchunks))
+        if not all_chunks:
+            raise ValueError("Diyalog boş.")
+        report: dict = {"normalized_text": " ".join(c.text for c in all_chunks if c.text), "chunks": [],
+                        "colloquial_level": level, "colloquial_changes": _dedupe_changes(changes),
+                        "lexicon_changes": _dedupe_changes(lex_changes), "nonverbal_used": [], "dialog": True}
+
+        with self._lock:
+            model = self.tts()
+            sr = int(model.sr)
+            base_kwargs = _filter_kwargs(model.generate, {
+                "language_id": language, "exaggeration": float(o.exaggeration),
+                "cfg_weight": float(o.cfg_weight), "temperature": float(o.temperature),
+            })
+            # Parçaları sıra sıra üret (her sıra kendi referansıyla)
+            pieces: list[np.ndarray] = []
+            base_pauses: list[int] = []
+            qc_reports: list[dict | None] = []
+            done = 0
+            for ti, t in enumerate(turns):
+                idx = [k for k, tt in enumerate(turn_of_chunk) if tt == t.index]
+                if not idx:
+                    continue
+                sub = [all_chunks[k] for k in idx]
+
+                def _prog(i, n, msg, _d=done, _tot=len(all_chunks)):
+                    if progress:
+                        progress(_d + i, _tot, f"{t.speaker or 'anlatıcı'}: {msg}")
+
+                def _part(i, w, s, txt, speaker=None):
+                    if partial:
+                        _call_partial(partial, i, w, s, txt, speaker)   # _render_chunks zaten index_offset ekler
+
+                p, bp, qr = self._render_chunks(model, sr, sub, refs_of_turn[ti], base_kwargs, seed, o.speed,
+                                                o.punctuation_emotion, o.emotion_refs, o.emotion_fx, o.qc,
+                                                _prog, _part, check_cancelled, report, index_offset=done)
+                pieces.extend(p)
+                base_pauses.extend(bp)
+                qc_reports.extend(qr)
+                done += len(sub)
+            if check_cancelled:
+                check_cancelled()
+            # Sıra sınırlarındaki duraklamalar: konuşma sırası alma planı
+            last_chunk_of_turn = {}
+            for k, tt in enumerate(turn_of_chunk):
+                last_chunk_of_turn[tt] = k
+            durations = []
+            for t in turns:
+                idx = [k for k, tt in enumerate(turn_of_chunk) if tt == t.index]
+                durations.append(sum(len(pieces[k]) / sr for k in idx) if idx else 0.0)
+            tpauses = plan_turn_pauses(turns, durations, seed=seed)
+            for t, tp in zip(turns, tpauses):
+                k = last_chunk_of_turn.get(t.index)
+                if k is not None:
+                    base_pauses[k] = int(tp)
+            # Birleştirme: tutarlılık konuşmacı başına, oda tonu/nefes anlatıcı ya da ilk konuşmacı kaydından
+            first_refs = next((r for r in refs_of_turn if r is not None), None)
+            wav, info = self._finish(pieces, base_pauses, all_chunks, sr, first_refs, self._pause_scale(first_refs, o.pause_scale),
+                                     o.breaths, o.room_tone, o.master, False, seed, progress, len(all_chunks), report,
+                                     consistency_groups=(turn_of_chunk, refs_of_turn, turns) if o.consistency else None)
+            report["prosody"] = info
+            if o.qc:
+                try:
+                    from .qc import summarize
+
+                    indexed = [{"index": i, **r} for i, r in enumerate(qc_reports) if r]
+                    report["qc"] = indexed
+                    report["qc_summary"] = summarize(indexed)
+                except Exception:  # noqa: BLE001
+                    pass
+            timeline = self._timeline(report["chunks"], info, sr)
+            if o.subtitles:
+                report["timeline"] = timeline
+            # Sıra raporu (başlangıç/bitiş zamanları zaman çizelgesinden)
+            starts, ends = [], []
+            for t in turns:
+                idx = [k for k, tt in enumerate(turn_of_chunk) if tt == t.index]
+                if idx and timeline:
+                    starts.append(timeline[idx[0]]["start"])
+                    ends.append(timeline[idx[-1]]["end"])
+                else:
+                    starts.append(0.0)
+                    ends.append(0.0)
+            names = {}
+            for t, r in zip(turns, refs_of_turn):
+                key = t.speaker or "Anlatıcı"
+                names[key] = (r.name if r and r.name else "Varsayılan ses")
+            report["turns"] = merge_turn_report(turns, starts, ends, names)
+            report["speakers"] = [{"speaker": s, "voice_name": names.get(s, "")} for s in names]
+            return wav, sr, report
+
+    # ---------- iç yardımcılar ----------
+    @staticmethod
+    def _with_fillers(text: str, language: str, fillers: bool, style: str | None, seed: int | None) -> str:
+        """Konuşma dolgularını (yani, hani, işte…) tüm metne bir kez, etiketlere dokunmadan uygular."""
+        if not fillers or language != "tr":
+            return text
+        try:
+            from . import lexicon
+
+            return lexicon.add_fillers(text, seed=seed, style=style or "sohbet")
+        except Exception as e:  # noqa: BLE001
+            log.debug("Dolgu katmanı atlandı: %s", e)
+            return text
+
+    @staticmethod
+    def _pause_scale(refs: VoiceRefs | None, pause_scale: float) -> float:
         natural_scale = 1.0
         if refs is not None:
             try:
@@ -408,84 +766,232 @@ class Engine:
                     natural_scale = float(refs.analysis.get("pauses", {}).get("scale") or 1.0)
             except (TypeError, ValueError, AttributeError):
                 natural_scale = 1.0
-        total_scale = min(2.0, max(0.5, float(pause_scale) * natural_scale))
+        return min(2.0, max(0.5, float(pause_scale) * natural_scale))
 
-        with self._lock:
-            model = self.tts()
-            sr = int(model.sr)
+    @staticmethod
+    def _recorded_nonverbal(refs: VoiceRefs | None) -> frozenset[str]:
+        """Bu ses için gerçek kaydı olan tepki anahtarları (yalnızca bunlar ayrı parça olur)."""
+        if refs is None or not refs.nonverbal:
+            return frozenset()
+        return frozenset(k for k, p in refs.nonverbal.items() if p is not None and Path(p).exists())
 
-            base_kwargs = _filter_kwargs(model.generate, {
-                "language_id": language,
-                "exaggeration": float(exaggeration),
-                "cfg_weight": float(cfg_weight),
-                "temperature": float(temperature),
-            })
+    def _render_chunks(self, model, sr: int, chunks: list[Chunk], refs: VoiceRefs | None, base_kwargs: dict,
+                       seed: int | None, speed: float, punctuation_emotion: bool, emotion_refs: bool, emotion_fx: str,
+                       use_qc: bool, progress, partial, check_cancelled, report: dict, index_offset: int = 0
+                       ) -> tuple[list[np.ndarray], list[int], list[dict | None]]:
+        """Parçaları sırayla üretir (tepkiler kayıttan, metinler modelden); QC ile yeniden üretim yapar."""
+        pieces: list[np.ndarray] = []
+        base_pauses: list[int] = []
+        qc_reports: list[dict | None] = []
+        n = len(chunks)
+        expected_cps = None
+        if use_qc and refs is not None:
+            try:
+                from .qc import estimate_cps
 
-            pieces: list[np.ndarray] = []
-            base_pauses: list[int] = []
-            for i, ch in enumerate(chunks):
-                if check_cancelled:
-                    check_cancelled()
-                if progress:
-                    progress(i, len(chunks), ch.text[:60])
-                if seed is not None:
-                    self._seed(seed + i)
-                profile = PROFILES.get(ch.emotion or "")
-                kw, chunk_speed = self._chunk_settings(base_kwargs, profile, ch.punct if punctuation_emotion else "", len(ch.text), emotion_fx)
-                ref_path, ref_src = self.reference_for(refs, ch.emotion, derive=emotion_refs and emotion_fx == "full")
-                if ref_path is not None:
-                    kw["audio_prompt_path"] = str(ref_path)
-                elif getattr(self, "_default_conds", None) is not None and hasattr(model, "conds"):
-                    model.conds = self._default_conds      # klonsuz üretim: varsayılan sesi geri yükle
-                kw = _filter_kwargs(model.generate, kw)
-                log.info("Parça %d/%d (%d kar.) duygu=%s ref=%s ex=%.2f cfg=%.2f hız=%.2f",
-                         i + 1, len(chunks), len(ch.text), ch.emotion or "-", ref_src,
-                         kw.get("exaggeration", 0.5), kw.get("cfg_weight", 0.5), chunk_speed * speed)
-                piece = self._generate_checked(model, ch.text, kw, sr)
-                piece = post_process(piece, sr, profile, emotion_fx)
-                piece = audio.change_speed(piece, sr, chunk_speed * speed)
-                if piece.size < int(sr * 0.05):      # ffmpeg çok kısa parçayı boşaltabilir; sessiz dolgu
-                    piece = np.zeros(int(sr * 0.05), dtype=np.float32)
-                pieces.append(piece)
-                pause = int(ch.pause_after_ms * (profile.pause_mul if profile else 1.0))
-                base_pauses.append(pause)
-                report["chunks"].append({"text": ch.text, "emotion": ch.emotion, "ref": ref_src,
-                                         "exaggeration": round(kw.get("exaggeration", 0.5), 2),
-                                         "cfg_weight": round(kw.get("cfg_weight", 0.5), 2),
-                                         "speed": round(chunk_speed * speed, 2), "pause_ms": pause,
-                                         "duration": round(len(piece) / sr, 2)})
-                if partial:
-                    try:
-                        partial(i, piece, sr, ch.text)
-                    except Exception as e:  # noqa: BLE001
-                        log.debug("Canlı önizleme parçası yazılamadı: %s", e)
-
+                expected_cps = estimate_cps(self._cps_history.get(refs.voice_id, []))
+            except Exception:  # noqa: BLE001
+                expected_cps = None
+        for i, ch in enumerate(chunks):
             if check_cancelled:
                 check_cancelled()
+            gi = index_offset + i
             if progress:
-                progress(len(chunks), len(chunks), "birleştiriliyor")
-            wav, prosody_info = self._assemble(chunks, pieces, base_pauses, sr, refs, total_scale, breaths, room_tone, seed)
-            report["prosody"] = prosody_info
-            for c, p in zip(report["chunks"], prosody_info["pauses_ms"]):
-                c["pause_ms"] = p
-
-            if master:
-                if check_cancelled:
-                    check_cancelled()
-                if progress:
-                    progress(len(chunks), len(chunks), "seviye dengeleniyor")
+                progress(i, n, (ch.text or f"[{ch.nonverbal}]")[:60])
+            if seed is not None:
+                self._seed(seed + gi)
+            # --- gerçek tepki parçası ---
+            if ch.nonverbal:
+                piece = self._nonverbal_piece(ch, refs, sr, seed, gi, pieces)
+                pieces.append(piece)
+                base_pauses.append(ch.pause_after_ms)
+                qc_reports.append(None)
+                report["nonverbal_used"].append(ch.nonverbal)
+                report["chunks"].append({"text": f"[{ch.nonverbal}]", "emotion": ch.emotion, "ref": "tepki kaydı",
+                                         "nonverbal": ch.nonverbal, "exaggeration": None, "cfg_weight": None,
+                                         "speed": 1.0, "pause_ms": ch.pause_after_ms, "duration": round(len(piece) / sr, 3),
+                                         "speaker": ch.speaker})
+                if partial:
+                    try:
+                        _call_partial(partial, gi, piece, sr, f"[{ch.nonverbal}]", ch.speaker)
+                    except Exception:  # noqa: BLE001
+                        pass
+                continue
+            # --- metin parçası ---
+            profile = self._profile_for(ch)
+            kw, chunk_speed = self._chunk_settings(base_kwargs, profile, ch.punct if punctuation_emotion else "", len(ch.text), emotion_fx)
+            if ch.emphasized:
+                cap = 0.8 if len(ch.text) < 25 else 0.95        # kısa parça kararlılık sınırı korunur
+                kw["exaggeration"] = min(cap, kw.get("exaggeration", 0.5) + 0.15)
+                chunk_speed *= 0.95
+            if ch.rate:
+                chunk_speed *= float(ch.rate)
+            ref_emotion = ch.arc_to if (ch.arc_to and ch.arc_t is not None and ch.arc_t >= 0.5) else ch.emotion
+            ref_path, ref_src = self.reference_for(refs, ref_emotion, derive=emotion_refs and emotion_fx == "full")
+            if ref_path is not None:
+                kw["audio_prompt_path"] = str(ref_path)
+            elif self._default_conds is not None and hasattr(model, "conds"):
+                model.conds = self._default_conds      # klonsuz üretim: varsayılan sesi geri yükle
+            kw = _filter_kwargs(model.generate, kw)
+            log.info("Parça %d/%d (%d kar.) duygu=%s×%.2f ref=%s ex=%.2f cfg=%.2f hız=%.2f%s",
+                     i + 1, n, len(ch.text), ch.emotion or "-", ch.intensity, ref_src,
+                     kw.get("exaggeration", 0.5), kw.get("cfg_weight", 0.5), chunk_speed * speed,
+                     " VURGU" if ch.emphasized else "")
+            piece, qrep = self._generate_checked(model, ch.text, kw, sr, use_qc=use_qc, expected_cps=expected_cps,
+                                                 seed=(seed + gi) if seed is not None else None)
+            if refs is not None and len(ch.text) >= 20 and piece.size:
+                hist = self._cps_history.setdefault(refs.voice_id, [])
+                hist.append((len(ch.text), len(piece) / sr))       # ham model süresi (hız/perde öncesi)
+                del hist[:-40]
+            piece = post_process(piece, sr, profile, emotion_fx)
+            if ch.pitch:
+                piece = self._pitch_shift(piece, sr, float(ch.pitch))
+            piece = audio.change_speed(piece, sr, chunk_speed * speed)
+            if piece.size < int(sr * 0.05):      # ffmpeg çok kısa parçayı boşaltabilir; sessiz dolgu
+                piece = np.zeros(int(sr * 0.05), dtype=np.float32)
+            pieces.append(piece)
+            pause = int(ch.pause_after_ms * (profile.pause_mul if profile else 1.0))
+            base_pauses.append(pause)
+            qc_reports.append(qrep)
+            report["chunks"].append({"text": ch.text, "emotion": ch.emotion, "ref": ref_src,
+                                     "intensity": round(ch.intensity, 2) if ch.intensity != 1.0 else None,
+                                     "blend": ch.blend or None, "arc_to": ch.arc_to, "emphasized": ch.emphasized or None,
+                                     "exaggeration": round(kw.get("exaggeration", 0.5), 2),
+                                     "cfg_weight": round(kw.get("cfg_weight", 0.5), 2),
+                                     "speed": round(chunk_speed * speed, 2), "pause_ms": pause,
+                                     "duration": round(len(piece) / sr, 3), "speaker": ch.speaker,
+                                     "qc_score": qrep.get("score") if qrep else None,
+                                     "retries": qrep.get("retries") if qrep else None})
+            if partial:
                 try:
-                    wav = prosody.master(wav, sr)
+                    _call_partial(partial, gi, piece, sr, ch.text, ch.speaker)
                 except Exception as e:  # noqa: BLE001
-                    log.warning("Mastering atlandı: %s", e)
-                    wav = audio.normalize_relative(wav, pieces, target_dbfs=-18.0, peak_dbfs=-1.0)
-            else:
-                wav = audio.normalize_relative(wav, pieces, target_dbfs=-18.0, peak_dbfs=-1.0)
+                    log.debug("Canlı önizleme parçası yazılamadı: %s", e)
+        return pieces, base_pauses, qc_reports
+
+    @staticmethod
+    def _profile_for(ch: Chunk) -> EmotionProfile | None:
+        """Parçanın etkin duygu profili: yoğunluk + karışım + kayış."""
+        try:
+            prof = effective_profile(ch.emotion, ch.intensity, ch.blend or None)
+            if ch.arc_to and ch.arc_t is not None:
+                target = effective_profile(ch.arc_to, ch.intensity, None)
+                prof = interpolate_profile(prof, target, float(ch.arc_t))
+            return prof
+        except Exception as e:  # noqa: BLE001
+            log.debug("Duygu profili hesaplanamadı: %s", e)
+            return PROFILES.get(ch.emotion or "")
+
+    def _nonverbal_piece(self, ch: Chunk, refs: VoiceRefs | None, sr: int, seed: int | None, gi: int,
+                         prev_pieces: list[np.ndarray]) -> np.ndarray:
+        """Kullanıcının gerçek tepki kaydını komşu konuşma seviyesine göre seviyeleyerek döndürür."""
+        from .nonverbal import active_rms_db, level_match, render_nonverbal
+
+        path = refs.nonverbal[ch.nonverbal]
+        piece = render_nonverbal(path, sr, seed=(seed + gi) if seed is not None else None)
+        neighbor = None
+        for p in reversed(prev_pieces):
+            if p.size > sr // 5:
+                try:
+                    neighbor = active_rms_db(p, sr)
+                except Exception:  # noqa: BLE001
+                    neighbor = None
+                break
+        try:
+            piece = level_match(piece, sr, neighbor)
+        except Exception:  # noqa: BLE001
+            pass
+        return np.asarray(piece, dtype=np.float32)
+
+    @staticmethod
+    def _pitch_shift(piece: np.ndarray, sr: int, semitones: float) -> np.ndarray:
+        from .emotion import _ffmpeg_filter, pitch_tempo_filter
+
+        try:
+            f = pitch_tempo_filter(sr, semitones, 1.0)
+            return _ffmpeg_filter(piece, sr, f) if f else piece
+        except Exception as e:  # noqa: BLE001
+            log.debug("Perde kaydırma atlandı: %s", e)
+            return piece
+
+    def _finish(self, pieces, base_pauses, chunks, sr, refs, total_scale, breaths, room_tone, master, consistency,
+                seed, progress, n, report, consistency_groups=None) -> tuple[np.ndarray, dict]:
+        """Tutarlılık → doğal birleştirme → mastering → ses yüksekliği ölçümü."""
+        cons_info = None
+        if consistency or consistency_groups:
+            if progress:
+                progress(n, n, "tını eşitleniyor")
+            pieces, cons_info = self._apply_consistency(pieces, chunks, sr, refs, consistency_groups)
+        if progress:
+            progress(n, n, "birleştiriliyor")
+        wav, info = self._assemble(chunks, pieces, base_pauses, sr, refs, total_scale, breaths, room_tone, seed)
+        if cons_info:
+            info["consistency"] = cons_info
+        for c, p in zip(report["chunks"], info["pauses_ms"]):
+            c["pause_ms"] = p
+        if master:
+            if progress:
+                progress(n, n, "seviye dengeleniyor")
             try:
-                report["loudness"] = prosody.measure_loudness(wav, sr)
-            except Exception:  # noqa: BLE001
-                pass
-            return wav, sr, report
+                wav = prosody.master(wav, sr)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Mastering atlandı: %s", e)
+                wav = audio.normalize_relative(wav, pieces, target_dbfs=-18.0, peak_dbfs=-1.0)
+        else:
+            wav = audio.normalize_relative(wav, pieces, target_dbfs=-18.0, peak_dbfs=-1.0)
+        try:
+            report["loudness"] = prosody.measure_loudness(wav, sr)
+        except Exception:  # noqa: BLE001
+            pass
+        return wav, info
+
+    def _apply_consistency(self, pieces, chunks, sr, refs, groups=None):
+        """Metin parçalarını referans tınısına yaklaştırır ve ardışık seviye sıçramalarını sınırlar (tepkiler hariç)."""
+        try:
+            from .consistency import align_loudness, consistency_report, match_timbre
+        except Exception:  # noqa: BLE001
+            return pieces, None
+        before = list(pieces)
+        out = list(pieces)
+        text_idx = [i for i, c in enumerate(chunks) if not c.nonverbal and pieces[i].size > sr // 5]
+        try:
+            if groups:
+                turn_of_chunk, refs_of_turn, turns = groups
+                turn_refs = {t.index: r for t, r in zip(turns, refs_of_turn)}
+                targets = {}
+                for i in text_idx:
+                    r = turn_refs.get(turn_of_chunk[i])
+                    key = r.voice_id if r else None
+                    if key not in targets:
+                        targets[key] = self._voice_ltas(r, sr) if r else None
+                    if targets[key] is not None:
+                        out[i] = match_timbre(out[i], sr, targets[key])
+            else:
+                target = self._voice_ltas(refs, sr)
+                if target is not None:
+                    for i in text_idx:
+                        out[i] = match_timbre(out[i], sr, target)
+            sub = align_loudness([out[i] for i in text_idx])
+            for i, p in zip(text_idx, sub):
+                out[i] = p
+            rep = consistency_report([before[i] for i in text_idx], [out[i] for i in text_idx], sr) if text_idx else {}
+            return out, rep
+        except Exception as e:  # noqa: BLE001
+            log.warning("Tutarlılık katmanı atlandı: %s", e)
+            return pieces, None
+
+    @staticmethod
+    def _timeline(chunk_reports: list[dict], info: dict, sr: int) -> list[dict]:
+        try:
+            from .timing import build_timeline
+
+            tl_chunks = [{"text": c["text"], "duration": float(c["duration"]), "emotion": c.get("emotion"),
+                          "speaker": c.get("speaker")} for c in chunk_reports]
+            extra = info.get("extra_before_ms")
+            return build_timeline(tl_chunks, info.get("pauses_ms", []), sr, extra_before_ms=extra)
+        except Exception as e:  # noqa: BLE001
+            log.debug("Zaman çizelgesi üretilemedi: %s", e)
+            return []
 
     def _assemble(self, chunks: list[Chunk], pieces: list[np.ndarray], base_pauses: list[int], sr: int,
                   refs: VoiceRefs | None, pause_scale: float, breaths: bool, room_tone: bool,
@@ -495,22 +1001,45 @@ class Engine:
         try:
             plan_in = []
             for i, (c, p) in enumerate(zip(chunks, base_pauses)):
-                plan_in.append({"text": c.text, "punct": c.punct, "emotion": c.emotion, "pause_after_ms": p,
-                                "paragraph_end": c.paragraph_end,
-                                "next_text": chunks[i + 1].text if i + 1 < len(chunks) else None})
+                plan_in.append({"text": c.text or f"[{c.nonverbal}]", "punct": c.punct, "emotion": c.emotion,
+                                "pause_after_ms": p, "paragraph_end": c.paragraph_end,
+                                "next_text": (chunks[i + 1].text or "tepki") if i + 1 < len(chunks) else None})
             pauses = prosody.plan_pauses(plan_in, pause_scale=pause_scale, seed=seed)
-            # Etiket duraklamaları ([nefes], [2 sn]…) ölçeklenmeden, birebir eklenir (en çok 10 sn)
-            tag_ms = [min(MAX_TAG_PAUSE_MS, int(c.tag_pause_ms)) for c in chunks]
-            pauses = [int(p) + t for p, t in zip(pauses, tag_ms)]
+            # Vurgu/tepki mikro duraklamaları ve etiket duraklamaları ölçeklenmeden, birebir
+            fixed = []
+            for i, c in enumerate(chunks):
+                is_last = i == len(chunks) - 1
+                nxt = chunks[i + 1] if not is_last else None
+                if is_last:
+                    pass
+                elif c.turn_end:
+                    pauses[i] = int(c.pause_after_ms)          # diyalog sıra alma planı: ezilmez
+                elif nxt is not None and nxt.nonverbal:
+                    pauses[i] = int(nxt.pause_before_ms)       # tepki öncesi mikro duraklama (90 ms)
+                elif c.nonverbal:
+                    pauses[i] = int(c.pause_after_ms)          # tepki sonrası (140 ms)
+                elif c.emphasized or (nxt is not None and nxt.emphasized):
+                    pauses[i] = int(c.pause_after_ms)          # vurgu mikro duraklaması (_apply_emphasis belirledi)
+                fixed.append(min(MAX_TAG_PAUSE_MS, int(c.tag_pause_ms)))
+            pauses = [int(p) + t for p, t in zip(pauses, fixed)]
             durations = [len(p) / sr for p in pieces]
             room = breath = None
             if room_tone or breaths:
                 room, breath = self._room_and_breath(refs)
             breath_plan = prosody.plan_breaths(plan_in, durations, seed=seed) if breaths else None
-            wav = prosody.join_natural(pieces, pauses, sr,
-                                       room_tone=room if room_tone else None,
+            if breath_plan:
+                for i, c in enumerate(chunks):
+                    if c.nonverbal or c.emphasized or (i > 0 and chunks[i - 1].nonverbal):
+                        breath_plan[i] = False
+            wav = prosody.join_natural(pieces, pauses, sr, room_tone=room if room_tone else None,
                                        breath=breath, breath_plan=breath_plan)
-            info.update({"pauses_ms": [int(p) for p in pauses],
+            # Nefes eklenen yerlerde boşluk uzamış olabilir: gerçek boşluklar prosody'den (zaman çizelgesi için)
+            extra = [0] * len(chunks)
+            actual = list(getattr(prosody, "LAST_JOIN_GAPS_MS", []) or [])
+            if len(actual) == len(pauses):
+                for i in range(1, len(chunks)):
+                    extra[i] = max(0, int(actual[i - 1]) - int(pauses[i - 1]))
+            info.update({"pauses_ms": [int(p) for p in pauses], "extra_before_ms": extra,
                          "breaths": int(sum(breath_plan)) if breath_plan else 0,
                          "breath_source": ("kayıt" if breath is not None else "sentetik") if breath_plan and any(breath_plan) else None,
                          "room_tone": bool(room_tone and room is not None)})
@@ -550,30 +1079,71 @@ class Engine:
         speed = min(1.1, max(0.9, speed))
         return kw, speed
 
-    def _generate_checked(self, model, text: str, gen_kwargs: dict, sr: int) -> np.ndarray:
-        """Üretir; süre makul değilse (halüsinasyon / erken kesilme) daha düşük sıcaklıkla yeniden dener.
-        Yine de uzun kalırsa beklenen azami süreden sonrasını sessiz bir noktada keser."""
+    def _generate_checked(self, model, text: str, gen_kwargs: dict, sr: int, *, use_qc: bool = True,
+                          expected_cps: float | None = None, seed: int | None = None) -> tuple[np.ndarray, dict | None]:
+        """Üretir ve kalite kontrolünden geçirir; bozuksa farklı tohumla / daha kararlı ayarlarla yeniden dener.
+
+        Döndürür: (ses, qc raporu | None). QC kapalıysa eski süre denetimi uygulanır.
+        """
         n = len(text)
-        max_dur = n / MIN_CHARS_PER_SEC + 1.2          # "Hahaha!" (7) → 2.4 sn, 150 karakter → 26 sn
+        max_dur = n / MIN_CHARS_PER_SEC + 1.2
         min_dur = max(0.25, n / MAX_CHARS_PER_SEC)
-        attempts = [gen_kwargs,
-                    {**gen_kwargs, "temperature": min(float(gen_kwargs.get("temperature", 0.8)), 0.6),
-                     "cfg_weight": max(float(gen_kwargs.get("cfg_weight", 0.5)), 0.4)}]
-        best: tuple[float, np.ndarray] | None = None
-        for k, kwargs in enumerate(attempts):
+        stable = {**gen_kwargs, "temperature": min(float(gen_kwargs.get("temperature", 0.8)), 0.6),
+                  "cfg_weight": max(float(gen_kwargs.get("cfg_weight", 0.5)), 0.4)}
+        if not use_qc:
+            best = None
+            for k, kwargs in enumerate([gen_kwargs, stable]):
+                wav = self._to_numpy(model.generate(text, **_filter_kwargs(model.generate, kwargs)))
+                wav = audio.trim_silence(wav, sr, threshold_db=-45.0, pad_ms=40)
+                dur = len(wav) / sr
+                if min_dur <= dur <= max_dur:
+                    return wav, None
+                score = (dur - max_dur) if dur > max_dur else (min_dur - dur) * 3
+                if best is None or score < best[0]:
+                    best = (score, wav)
+            wav = best[1]
+            if len(wav) / sr > max_dur:
+                wav = audio.cut_at_silence(wav, sr, max_dur)
+            return wav, None
+
+        from .qc import apply_trim, check_chunk, pick_best
+
+        attempts: list[tuple[np.ndarray, dict]] = []
+        plan = [("ilk", gen_kwargs), ("tohum", gen_kwargs), ("kararlı", stable)]
+        for k, (label, kwargs) in enumerate(plan):
+            if k > 0 and seed is not None:
+                self._seed(seed + 9973 * k)
             wav = self._to_numpy(model.generate(text, **_filter_kwargs(model.generate, kwargs)))
             wav = audio.trim_silence(wav, sr, threshold_db=-45.0, pad_ms=40)
-            dur = len(wav) / sr
-            if min_dur <= dur <= max_dur:
-                return wav
-            log.warning("Parça süresi şüpheli (%.2f sn, beklenen %.1f–%.1f; deneme %d): %r", dur, min_dur, max_dur, k + 1, text[:40])
-            score = (dur - max_dur) if dur > max_dur else (min_dur - dur) * 3
-            if best is None or score < best[0]:
-                best = (score, wav)
-        wav = best[1]
-        if len(wav) / sr > max_dur:
-            wav = audio.cut_at_silence(wav, sr, max_dur)
-        return wav
+            try:
+                rep = check_chunk(wav, sr, text, expected_cps=expected_cps)
+            except Exception as e:  # noqa: BLE001
+                log.debug("QC atlandı: %s", e)
+                return wav, None
+            attempts.append((wav, rep))
+            decision = rep.get("decision", "accept")
+            if decision in ("accept", "trim"):
+                break
+            log.warning("Parça kalite kontrolü (%s): puan %s, karar %s — %s", label, rep.get("score"), decision,
+                        "; ".join(r.get("message", "") for r in rep.get("reasons", [])[:2]))
+            if decision == "retry_stable" and k < 2:
+                plan[k + 1] = ("kararlı", stable)
+        idx = pick_best([r for _, r in attempts])
+        wav, rep = attempts[idx]
+        rep = dict(rep)
+        rep["retries"] = len(attempts) - 1
+        rep["attempt"] = idx + 1
+        if rep.get("decision") in ("trim", "retry_seed") and len(wav) / sr > max_dur:
+            try:
+                wav = apply_trim(wav, sr, rep)
+            except Exception:  # noqa: BLE001
+                wav = audio.cut_at_silence(wav, sr, max_dur)
+        elif rep.get("decision") == "trim":
+            try:
+                wav = apply_trim(wav, sr, rep)
+            except Exception:  # noqa: BLE001
+                pass
+        return wav, rep
 
     def convert_voice(self, source_audio_path: str | Path, target_voice_path: str | Path) -> tuple[np.ndarray, int]:
         with self._lock:
@@ -599,6 +1169,46 @@ class Engine:
         torch.manual_seed(seed)
         if self.device == "cuda":
             torch.cuda.manual_seed_all(seed)
+
+
+def _pause_only_ms(text: str) -> int:
+    """Yalnızca duraklama etiketlerinden oluşan metnin ([2 sn] [nefes]) toplam süresi (ms), en çok 10 sn."""
+    from .emotion import PAUSE_TAGS, timed_pause_ms
+    from .tr import tr_lower
+
+    total = 0
+    for m in re.finditer(r"\[\s*([^\[\]]{1,40}?)\s*\]", text or ""):
+        raw = tr_lower(m.group(1).strip())
+        ms = timed_pause_ms(raw)
+        if ms is None:
+            ms = PAUSE_TAGS.get(raw)
+        if ms:
+            total += int(ms)
+    return min(MAX_TAG_PAUSE_MS, total)
+
+
+def _call_partial(fn, i: int, wav: np.ndarray, sr: int, text: str, speaker: str | None) -> None:
+    """Canlı önizleme geri çağrısı: 5 parametre kabul ediyorsa konuşmacıyı da verir (eski 4'lü imza korunur)."""
+    try:
+        n = len(inspect.signature(fn).parameters)
+    except (TypeError, ValueError):
+        n = 4
+    if n >= 5:
+        fn(i, wav, sr, text, speaker)
+    else:
+        fn(i, wav, sr, text)
+
+
+def _starts_with_emotion_tag(text: str) -> bool:
+    """Metin bir DUYGU etiketiyle mi başlıyor ([gülme]/[2 sn] gibi tepki ve duraklama etiketleri sayılmaz)."""
+    m = re.match(r"\s*\[\s*([^\[\]]{1,40}?)\s*\]", text or "")
+    if not m:
+        return False
+    try:
+        segs = parse_tagged_text(m.group(0) + " x", keep_nonverbal=True)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(segs) and segs[0].emotion is not None
 
 
 def _dedupe_changes(changes: list[dict], limit: int = 60) -> list[dict]:

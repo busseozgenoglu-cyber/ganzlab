@@ -3,7 +3,7 @@ import { api } from '../api'
 import { useRecorder } from '../useRecorder'
 import Player from './Player'
 import AnalysisCard, {
-  QualityBadge, fmtSn, isPoor, pickAnalysis, scoreTier, sortedIssues, trLower, useFileAnalysis,
+  QualityBadge, ScoreRing, capTr, fmtNum, fmtSn, isPoor, pickAnalysis, scoreTier, sortedIssues, trLower, useFileAnalysis,
 } from './AnalysisCard'
 
 /* ---------- okuma metinleri ---------- */
@@ -61,6 +61,118 @@ const REF_GOOD_SECONDS = 15
 const SAMPLE_GOOD_SECONDS = 10
 const LEVEL_COLORS = { ok: '#22c55e', hot: '#eab308', clip: '#ef4444' }
 const COUNTDOWN_KEY = 'sesklon_countdown'
+
+/* ---------- gerçek tepkiler (gülme, iç çekme…) ---------- */
+
+const NV_MAX_SECONDS = 5 // sunucu en yüksek enerjili 3 sn'yi alır; 5 sn kayıt payı bırakır
+
+/**
+ * Sunucu health.tags.nonverbal_recordable göndermezse (features.nonverbal açıkken) kullanılan liste.
+ * Anahtarlar sözleşmedeki NONVERBAL_KEYS ile aynıdır (docs/SOZLESME2.md §2).
+ */
+const NV_FALLBACK_SCRIPTS = {
+  'gülme': 'Komik bir şey duymuş gibi doğal, içten bir gülüş (1–3 sn).',
+  'kahkaha': 'Kendini bırak: gür, gerçek bir kahkaha at (2–3 sn).',
+  'kıkırdama': 'Ağzın kapalı, kısa ve hafif bir kıkırdama (1–2 sn).',
+  'iç çekme': 'Derin bir nefes al ve yorgun bir "hıııh" ile bırak (1–2 sn).',
+  'hmm': 'Düşünüyormuş gibi uzatarak "hımmm" de (1–2 sn).',
+  'of': 'Bıkkın, sıkılmış bir "offf" çek (1 sn).',
+  'nefes verir': 'Rahatlamış gibi nefesini yavaşça dışarı ver (1 sn).',
+  'öksürür': 'Kısa, doğal bir öksürük (1 sn).',
+  'boğaz temizler': 'Konuşmaya başlamadan önceki gibi boğazını temizle: "ıhım" (1 sn).',
+  'esner': 'Uykulu, uzun bir esneme (2–3 sn).',
+  'ağlar': 'Hafif hıçkırıklı, kısa bir ağlama (2–3 sn).',
+  'şaşırır': 'Şaşırmış gibi kısa bir nefes çek ya da "haa!" de (1 sn).',
+  'hıh': 'Burnundan kısa, küçümseyen bir "hıh" (1 sn).',
+  'mmm': 'Lezzetli bir şey tatmış gibi "mmm" de (1–2 sn).',
+  'cık': 'Dilini damağına vurarak "cık" de — "hayır" anlamında (1 sn).',
+}
+const NV_GENERIC_SCRIPT = 'Bu tepkiyi doğal hâliyle, kısa ve net olarak kaydedin (1–3 sn); önünde ve arkasında uzun sessizlik bırakmayın.'
+
+/** Ses örneğinin türü: "nonverbal" (gerçek tepki) ya da "emotion" (duygu kaydı). Eski sunucu "nv:" önekli döndürebilir. */
+function sampleKind(s) {
+  if (s?.kind === 'nonverbal' || s?.kind === 'emotion') return s.kind
+  return typeof s?.emotion === 'string' && s.emotion.startsWith('nv:') ? 'nonverbal' : 'emotion'
+}
+const sampleKey = (s) => String(s?.emotion ?? '').replace(/^nv:/, '')
+
+function countSamples(samples) {
+  let emotion = 0
+  let nonverbal = 0
+  for (const s of samples || []) {
+    if (sampleKind(s) === 'nonverbal') nonverbal++
+    else emotion++
+  }
+  return { emotion, nonverbal }
+}
+
+function buildNvItems(raw, feature) {
+  const list = (Array.isArray(raw) ? raw : [])
+    .filter((x) => x && typeof x.key === 'string' && x.key.trim())
+    .map((x) => ({
+      key: x.key.trim(),
+      label: typeof x.label === 'string' && x.label.trim() ? x.label.trim() : capTr(x.key.trim()),
+      script: typeof x.script === 'string' && x.script.trim() ? x.script.trim() : NV_FALLBACK_SCRIPTS[x.key.trim()] || '',
+    }))
+  if (list.length) return list
+  if (feature !== true) return []
+  return Object.entries(NV_FALLBACK_SCRIPTS).map(([key, script]) => ({ key, label: capTr(key), script }))
+}
+
+/* ---------- kayıt iyileştirme ---------- */
+
+const ENHANCE_MIN_GAIN = 3 // sunucu bu kadar puan kazanç yoksa uygulamaz (force ile uygulanır)
+const ENHANCE_REASONS = { noisy: 'arka plan gürültüsü', hum: 'elektrik uğultusu', too_quiet: 'kısık kayıt', dc_offset: 'DC kayması' }
+
+/** "Kaydı iyileştir" belirgin gösterilsin mi? Zayıf/orta kayıt ya da gürültü, uğultu, kısıklık, DC kayması varsa evet. */
+function enhanceAdvice(a) {
+  if (!a) return { recommend: false, reasons: [] }
+  const codes = new Set(sortedIssues(a.issues).map((i) => i.code))
+  const reasons = Object.keys(ENHANCE_REASONS).filter((c) => codes.has(c)).map((c) => ENHANCE_REASONS[c])
+  const score = Number(a.quality_score)
+  const grade = trLower(a.grade || (a.quality_score != null && Number.isFinite(score) ? scoreTier(score).grade : ''))
+  const weak = grade === 'zayıf' || grade === 'orta'
+  if (weak && !reasons.length) reasons.push(`kayıt kalitesi ${grade}`)
+  return { recommend: weak || reasons.length > 0, reasons }
+}
+
+/** Sunucu raporundaki adım kodlarını Türkçe etikete çevirir (report.applied + ölçümler). */
+function enhanceSteps(report) {
+  const r = report && typeof report === 'object' ? report : {}
+  const list = Array.isArray(r.applied) ? r.applied : []
+  return list.map((code) => {
+    switch (String(code)) {
+      case 'denoise': {
+        const db = Math.abs(Number(r.noise_reduction_db))
+        return Number.isFinite(db) && db >= 0.5 ? `Gürültü azaltma (−${fmtNum(db, 0)} dB)` : 'Gürültü azaltma'
+      }
+      case 'dehum':
+        return Number(r.hum_hz) > 0 ? `Elektrik uğultusu (${fmtNum(r.hum_hz, 0)} Hz)` : 'Elektrik uğultusu'
+      case 'declick':
+        return Number(r.clicks_removed) > 0 ? `Tık temizliği (${fmtNum(r.clicks_removed, 0)})` : 'Tık temizliği'
+      case 'highpass':
+        return 'Alçak frekans kesimi'
+      case 'level':
+      case 'gain': {
+        const g = Number(r.gain_db)
+        return Number.isFinite(g) && Math.abs(g) >= 0.5 ? `Seviye (${g > 0 ? '+' : '−'}${fmtNum(Math.abs(g), 0)} dB)` : 'Seviye'
+      }
+      case 'dc':
+      case 'dc_offset':
+        return 'DC kayması düzeltme'
+      default:
+        return String(code)
+    }
+  })
+}
+
+const scoreOf = (a) => {
+  const n = Number(a?.quality_score)
+  return a?.quality_score != null && Number.isFinite(n) ? n : null
+}
+
+/** Tarayıcı ve Player dalga formu önbelleği eski kaydı göstermesin diye adrese sürüm ekler. */
+const withRev = (url, rev) => (url && rev ? `${url}${url.includes('?') ? '&' : '?'}v=${rev}` : url)
 
 /* ---------- yardımcılar (Convert.jsx de kullanır) ---------- */
 
@@ -476,7 +588,8 @@ function VoiceSettings({ v, styles, refresh, notify }) {
 }
 
 function EmotionSamples({ v, emotions, refresh, notify }) {
-  const samples = useMemo(() => v.samples || [], [v.samples])
+  // Yalnızca duygu kayıtları; gerçek tepkiler (kind: "nonverbal") ayrı bölümde ve kapsamaya sayılmaz.
+  const samples = useMemo(() => (v.samples || []).filter((s) => sampleKind(s) === 'emotion'), [v.samples])
   const byEmotion = useMemo(() => new Map(samples.map((s) => [s.emotion, s])), [samples])
   const [sel, setSel] = useState(() => (emotions.find((e) => !byEmotion.has(e.name)) || emotions[0])?.name || '')
   const [file, setFile] = useState(null)
@@ -588,7 +701,7 @@ function EmotionSamples({ v, emotions, refresh, notify }) {
       )}
 
       {samples.length > 0 && (
-        <ul className="list">
+        <ul className="list" aria-label="Duygu kayıtları">
           {samples.map((s) => (
             <li key={s.id} className="item small">
               <div className="item-head">
@@ -608,16 +721,267 @@ function EmotionSamples({ v, emotions, refresh, notify }) {
   )
 }
 
-function VoiceCard({ v, languages, emotions, styles, fresh, refresh, notify }) {
+/**
+ * Gerçek tepki kayıtları: metinde [gülme] yazıldığında modelin "Hahaha" okuması yerine bu kayıt çalınır.
+ * items: [{ key, label, script }] (health.tags.nonverbal_recordable).
+ */
+function NonverbalSamples({ v, items, refresh, notify }) {
+  const recorded = useMemo(() => {
+    const m = new Map()
+    for (const s of v.samples || []) if (sampleKind(s) === 'nonverbal') m.set(sampleKey(s), s)
+    return m
+  }, [v.samples])
+  const [sel, setSel] = useState(() => (items.find((i) => !recorded.has(i.key)) || items[0])?.key || '')
+  const [file, setFile] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const fileRef = useRef(null)
+  const preview = useObjectUrl(file)
+
+  // Liste sonradan gelirse ya da değişirse geçerli bir seçim yap (önce kaydı olmayan).
+  useEffect(() => {
+    if (items.some((i) => i.key === sel)) return
+    const first = items.find((i) => !recorded.has(i.key)) || items[0]
+    setSel(first ? first.key : '')
+  }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const item = items.find((i) => i.key === sel) || null
+  const current = item ? recorded.get(item.key) : null
+  const labelOf = (key) => items.find((i) => i.key === key)?.label || capTr(key)
+  // Kayıtlı tepkiler: önce sunucu listesindeki sırayla, listede olmayanlar sonda
+  const list = useMemo(() => {
+    const order = new Map(items.map((i, k) => [i.key, k]))
+    return [...recorded.entries()].sort((a, b) => (order.get(a[0]) ?? 999) - (order.get(b[0]) ?? 999) || a[0].localeCompare(b[0], 'tr'))
+  }, [recorded, items])
+
+  function clearInput() {
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  async function add() {
+    if (!file || !item) return notify('Önce kayıt yapın ya da dosya seçin.', 'error')
+    setBusy(true)
+    try {
+      const updated = await api.addNonverbal(v.id, item.key, file)
+      setFile(null)
+      clearInput()
+      if (await refresh()) notify(`"${item.label}" eklendi — metinde [${item.key}] yazınca bu kayıt çalınır.`)
+      // Kayıt seansını hızlandır: sıradaki eksik tepkiye geç.
+      const have = new Set(recorded.keys()).add(item.key)
+      for (const s of Array.isArray(updated?.samples) ? updated.samples : []) if (sampleKind(s) === 'nonverbal') have.add(sampleKey(s))
+      const next = items.find((i) => !have.has(i.key))
+      if (next) setSel(next.key)
+    } catch (err) {
+      notify(err.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove(key) {
+    const label = labelOf(key)
+    if (!window.confirm(`"${label}" tepki kaydı silinsin mi?`)) return
+    try {
+      await api.deleteNonverbal(v.id, key)
+      if (await refresh()) notify(`"${label}" tepki kaydı silindi.`)
+    } catch (err) {
+      notify(err.message, 'error')
+    }
+  }
+
+  return (
+    <div className="samplebox stack nv-samples">
+      <div className="muted small">
+        Metinde <b>[gülme]</b> yazdığında modelin "Hahaha" demesi yerine <b>SENİN</b> gülmen kullanılır.
+        Her tepki için 1–3 sn yeterli (en fazla {NV_MAX_SECONDS} sn kaydedilir); sessizlik kırpılır, seviye dengelenir.
+      </div>
+
+      <div className="presets" role="group" aria-label="Kaydedilebilir tepkiler">
+        {items.map((i) => {
+          const s = recorded.get(i.key)
+          const on = sel === i.key
+          const title = s ? `Kayıtlı${s.duration ? ` (${fmtSn(s.duration)})` : ''}. Yenilemek için seçin.` : 'Kayıt yok — seçip kaydedin.'
+          return (
+            <button type="button" key={i.key} title={title} aria-pressed={on} onClick={() => setSel(i.key)}
+              className={`chip clickable ${s ? 'on' : ''} ${on ? 'active' : ''}`}>
+              {s ? '✓ ' : '+ '}{i.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {item && (
+        <div className="sample-editor stack">
+          <div className="small">
+            <b>{current ? `Kaydı yenile: ${item.label}` : `+ Kaydet: ${item.label}`}</b>
+            <span className="muted"> — metinde <code>[{item.key}]</code> yazınca çalınır</span>
+          </div>
+          <blockquote className="quote">{item.script || NV_GENERIC_SCRIPT}</blockquote>
+          <Recorder onFile={(f) => { setFile(f); clearInput(); notify('Kayıt alındı — dinleyip ekleyebilirsin.') }} label="● Kaydet"
+            maxSeconds={NV_MAX_SECONDS} disabled={busy} />
+          <div className="row">
+            <label className="grow">…ya da dosya
+              <input ref={fileRef} type="file" accept="audio/*,video/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+            </label>
+            <button type="button" className="btn primary" disabled={busy || !file} onClick={add}
+              aria-label={current ? `"${item.label}" tepki kaydını değiştir` : `"${item.label}" tepkisi olarak ekle`}>
+              {busy ? 'Yükleniyor…' : current ? 'Değiştir' : 'Ekle'}
+            </button>
+          </div>
+          {file && preview && (
+            <Player src={preview} compact title={`Seçili kayıt — ${item.label}`} downloadName={file.name || 'tepki.webm'} />
+          )}
+        </div>
+      )}
+
+      {list.length > 0 ? (
+        <ul className="list" aria-label="Tepki kayıtları">
+          {list.map(([key, s]) => (
+            <li key={s.id || key} className="item small">
+              <div className="item-head">
+                <span>
+                  <span className="tag vc">{labelOf(key)}</span> <span className="muted">{fmtSn(s.duration)}</span>{' '}
+                  <code>[{key}]</code>
+                </span>
+                <button type="button" className="btn ghost small danger-text" onClick={() => remove(key)}
+                  aria-label={`"${labelOf(key)}" tepki kaydını sil`}>Sil</button>
+              </div>
+              <Player src={s.url} compact title={`${v.name} — ${labelOf(key)}`}
+                downloadName={`${safeFileName(v.name)}-${safeFileName(key, 'tepki')}.wav`} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="muted small">Henüz tepki kaydı yok; kayıt yoksa etiket ünleme çevrilip okunur ("Hahaha!").</div>
+      )}
+    </div>
+  )
+}
+
+/** Referans kaydını iyileştirme / geri alma. İşlem sürerken ikinci istek gönderilmez. */
+function useEnhance(v, refresh, notify, onAudioChange) {
+  const [busy, setBusy] = useState('') // '' | 'run' | 'force' | 'undo'
+  const [result, setResult] = useState(null)
+  const busyRef = useRef(false)
+
+  async function guard(kind, fn) {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(kind)
+    try {
+      await fn()
+    } finally {
+      busyRef.current = false
+      setBusy('')
+    }
+  }
+
+  const run = (force = false) => guard(force ? 'force' : 'run', async () => {
+    if (typeof api.enhanceVoice !== 'function') return notify('Kayıt iyileştirme bu sürümde yok.', 'error')
+    try {
+      const res = await api.enhanceVoice(v.id, force)
+      const data = res && typeof res === 'object' ? res : { applied: false }
+      setResult(data)
+      if (!data.applied) {
+        notify('Belirgin bir kazanım olmadı; kayıt değiştirilmedi.', 'warn')
+        return
+      }
+      onAudioChange()
+      const b = scoreOf(pickAnalysis(data.before))
+      const a = scoreOf(pickAnalysis(data.after))
+      const scores = b != null && a != null ? ` — puan ${Math.round(b)} → ${Math.round(a)}` : ''
+      if (await refresh()) notify(`Kayıt iyileştirildi${scores}.`)
+    } catch (err) {
+      notify('İyileştirilemedi: ' + err.message, 'error')
+    }
+  })
+
+  const undo = () => guard('undo', async () => {
+    if (typeof api.undoEnhance !== 'function') return notify('Geri alma bu sürümde yok.', 'error')
+    try {
+      await api.undoEnhance(v.id)
+      setResult(null)
+      onAudioChange()
+      if (await refresh()) notify('Özgün kayda geri dönüldü.')
+    } catch (err) {
+      notify('Geri alınamadı: ' + err.message, 'error')
+    }
+  })
+
+  return { busy, result, run, undo, dismiss: () => setResult(null) }
+}
+
+function EnhanceResult({ result, busy, onForce, onUndo, onClose }) {
+  const bs = scoreOf(pickAnalysis(result?.before))
+  const as = scoreOf(pickAnalysis(result?.after))
+  const delta = bs != null && as != null ? Math.round(as) - Math.round(bs) : null
+  const deltaText = delta == null ? '' : `${delta > 0 ? '+' : delta < 0 ? '−' : '±'}${Math.abs(delta)} puan`
+  const steps = enhanceSteps(result?.report)
+  const applied = Boolean(result?.applied)
+  return (
+    <div className={`alert ${applied ? 'ok' : 'info'} stack tight enhance-result`} role="status">
+      <div className="row between">
+        <b>{applied ? '✓ Kayıt iyileştirildi' : 'Kayıt iyileştirme denendi'}</b>
+        <button type="button" className="btn ghost small" onClick={onClose} disabled={Boolean(busy)} aria-label="İyileştirme sonucunu kapat">✕</button>
+      </div>
+      {(bs != null || as != null) && (
+        <div className="row analysis-head enhance-compare">
+          {bs != null && <ScoreRing score={bs} color={scoreTier(bs).color} size={44} stroke={5} />}
+          <span className="muted" aria-hidden="true">→</span>
+          {as != null && <ScoreRing score={as} color={scoreTier(as).color} size={44} stroke={5} />}
+          <span className="small">
+            <b>Önce {bs != null ? Math.round(bs) : '–'} → sonra {as != null ? Math.round(as) : '–'}</b>
+            {delta != null && <> <span className={`badge ${delta >= ENHANCE_MIN_GAIN ? 'ok' : delta < 0 ? 'warn' : ''}`}>{deltaText}</span></>}
+          </span>
+        </div>
+      )}
+      {steps.length > 0 ? (
+        <div className="stack tight">
+          <span className="muted small">{applied ? 'Uygulananlar' : 'Denenenler'}</span>
+          <div className="presets">
+            {steps.map((s, k) => <span key={`${s}-${k}`} className="chip small">{s}</span>)}
+          </div>
+        </div>
+      ) : (
+        <div className="muted small">Düzeltilecek belirgin bir sorun bulunmadı.</div>
+      )}
+      {applied ? (
+        <div className="row between">
+          <span className="small">İyileştirilmiş kayıt kullanılıyor; özgün kayıt yedekte duruyor.</span>
+          <button type="button" className="btn ghost small" onClick={onUndo} disabled={Boolean(busy)}>
+            {busy === 'undo' ? 'Geri alınıyor…' : '↺ Geri al'}
+          </button>
+        </div>
+      ) : (
+        <div className="row between">
+          <span className="small">
+            Yeterli kazanım yok{delta != null ? ` (${deltaText}; en az +${ENHANCE_MIN_GAIN} gerekir)` : ''} — kayıt değiştirilmedi.
+          </span>
+          <button type="button" className="btn secondary small" onClick={onForce} disabled={Boolean(busy)}>
+            {busy === 'force' ? 'Uygulanıyor…' : 'Yine de uygula'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function VoiceCard({ v, languages, emotions, styles, nvItems, nvEnabled, enhanceEnabled, fresh, refresh, notify }) {
   const [showAnalysis, setShowAnalysis] = useState(Boolean(fresh))
   const [showSamples, setShowSamples] = useState(false)
+  const [showNv, setShowNv] = useState(false)
   const [fetched, setFetched] = useState(null)
   const [loadingAnalysis, setLoadingAnalysis] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [audioRev, setAudioRev] = useState(0) // iyileştirme/geri alma sonrası oynatıcı yeni dosyayı yüklesin
   const ref = useRef(null)
   const analysis = pickAnalysis(v.analysis) || fetched || fresh?.analysis || null
-  const sampleCount = v.samples?.length || 0
+  const counts = countSamples(v.samples)
   const freshId = fresh?.id
+  const enh = useEnhance(v, refresh, notify, () => { setFetched(null); setAudioRev(Date.now()) })
+  const advice = enhanceAdvice(analysis)
+  const enhancing = enh.busy === 'run' || enh.busy === 'force'
+  // Sunucu iyileştirilmiş sesi işaretliyorsa (isteğe bağlı alan) sonuç kartı kapalıyken de geri alınabilsin.
+  const enhancedFlag = v.enhanced === true || v.enhance?.applied === true
 
   // Yeni eklenen ses: analiz açık gelir ve görünür alana kaydırılır.
   useEffect(() => {
@@ -667,7 +1031,7 @@ function VoiceCard({ v, languages, emotions, styles, fresh, refresh, notify }) {
   }
 
   async function remove() {
-    if (!window.confirm(`"${v.name}" ve tüm duygu kayıtları silinsin mi?`)) return
+    if (!window.confirm(`"${v.name}" ve tüm duygu/tepki kayıtları silinsin mi?`)) return
     try {
       await api.deleteVoice(v.id)
       if (await refresh()) notify(`"${v.name}" silindi.`)
@@ -676,14 +1040,15 @@ function VoiceCard({ v, languages, emotions, styles, fresh, refresh, notify }) {
     }
   }
 
+  const meta = [languages[v.language] || v.language, fmtSn(v.duration), `${counts.emotion} duygu kaydı`]
+  if (counts.nonverbal) meta.push(`${counts.nonverbal} gerçek tepki`)
+
   return (
     <li ref={ref} className="item voice">
       <div className="item-head">
         <div>
           <strong>{v.name}</strong> <QualityBadge score={analysis?.quality_score} />
-          <div className="muted small">
-            {languages[v.language] || v.language} • {fmtSn(v.duration)} • {sampleCount} duygu kaydı
-          </div>
+          <div className="muted small">{meta.filter(Boolean).join(' • ')}</div>
         </div>
         <div className="actions">
           <button type="button" className="btn ghost small" onClick={toggleAnalysis} aria-expanded={showAnalysis}>
@@ -692,18 +1057,51 @@ function VoiceCard({ v, languages, emotions, styles, fresh, refresh, notify }) {
           <button type="button" className="btn ghost small" onClick={() => setShowSamples((s) => !s)} aria-expanded={showSamples}>
             Duygu kayıtları {showSamples ? '▴' : '▾'}
           </button>
+          {nvEnabled && (
+            <button type="button" className="btn ghost small" onClick={() => setShowNv((s) => !s)} aria-expanded={showNv}
+              title="Gülme, iç çekme gibi tepkileri kendi sesinle kaydet">
+              Gerçek tepkiler {showNv ? '▴' : '▾'}
+            </button>
+          )}
         </div>
       </div>
-      <Player src={v.url} downloadName={`${safeFileName(v.name)}.wav`} title={v.name} />
+      <Player src={withRev(v.url, audioRev)} downloadName={`${safeFileName(v.name)}.wav`} title={v.name} />
+      {enhanceEnabled && advice.recommend && !enh.result && (
+        <div className="row enhance-bar">
+          <button type="button" className="btn primary small" onClick={() => enh.run(false)} disabled={Boolean(enh.busy)}
+            aria-busy={enhancing}>
+            {enhancing ? <><span className="spinner" aria-hidden="true" /> İyileştiriliyor…</> : '✨ Kaydı iyileştir'}
+          </button>
+          <span className="muted small">
+            Önerilir: {advice.reasons.join(', ')}. Gürültü, uğultu ve seviye otomatik düzeltilir; özgün kayıt saklanır.
+          </span>
+        </div>
+      )}
+      {enh.result && (
+        <EnhanceResult result={enh.result} busy={enh.busy} onForce={() => enh.run(true)} onUndo={enh.undo} onClose={enh.dismiss} />
+      )}
       {showAnalysis && (
         <AnalysisCard analysis={analysis} loading={loadingAnalysis} onAnalyze={loadAnalysis} title="Referans kaydı" />
       )}
       <VoiceSettings v={v} styles={styles} refresh={refresh} notify={notify} />
       {showSamples && <EmotionSamples v={v} emotions={emotions} refresh={refresh} notify={notify} />}
+      {nvEnabled && showNv && <NonverbalSamples v={v} items={nvItems} refresh={refresh} notify={notify} />}
       <div className="row voice-tools">
         <button type="button" className="btn ghost small" onClick={rename}>Adı değiştir</button>
+        {enhanceEnabled && !advice.recommend && (
+          <button type="button" className="btn ghost small" onClick={() => enh.run(false)} disabled={Boolean(enh.busy)}
+            aria-busy={enhancing} title="Gürültü, elektrik uğultusu, tık sesleri ve seviyeyi otomatik düzeltir; özgün kayıt yedeklenir.">
+            {enhancing ? 'İyileştiriliyor…' : 'Kaydı iyileştir'}
+          </button>
+        )}
+        {enhanceEnabled && enhancedFlag && !enh.result && (
+          <button type="button" className="btn ghost small" onClick={enh.undo} disabled={Boolean(enh.busy)}
+            title="İyileştirmeden önceki özgün kayda dön">
+            {enh.busy === 'undo' ? 'Geri alınıyor…' : '↺ İyileştirmeyi geri al'}
+          </button>
+        )}
         <button type="button" className="btn ghost small" onClick={backup} disabled={exporting}
-          title="Sesi ve tüm duygu kayıtlarını tek bir zip dosyası olarak indirin">
+          title="Sesi, duygu ve tepki kayıtlarını tek bir zip dosyası olarak indirin">
           {exporting ? 'Hazırlanıyor…' : '⤓ Yedekle (zip)'}
         </button>
         <button type="button" className="btn ghost small danger-text" onClick={remove}>Sil</button>
@@ -719,7 +1117,14 @@ export default function Voices({ voices, languages, health, styles: stylesProp, 
   const tagEmotions = health?.tags?.emotions
   const emotions = useMemo(() => (tagEmotions || []).filter((e) => e?.name && !SKIP_EMOTIONS.has(e.name)), [tagEmotions])
   const styles = Array.isArray(stylesProp) ? stylesProp : Array.isArray(health?.styles) ? health.styles : []
-  const analysisEnabled = health?.features?.analysis !== false
+  const features = health?.features || {}
+  const analysisEnabled = features.analysis !== false
+  // health 15 sn'de bir yeniden gelir; liste içerik olarak değişmedikçe aynı dizi kalsın.
+  const nvKey = JSON.stringify(health?.tags?.nonverbal_recordable ?? null)
+  const nvFeature = features.nonverbal
+  const nvItems = useMemo(() => buildNvItems(JSON.parse(nvKey), nvFeature), [nvKey, nvFeature])
+  const nvEnabled = nvFeature !== false && nvItems.length > 0 && typeof api.addNonverbal === 'function'
+  const enhanceEnabled = features.enhance !== false && typeof api.enhanceVoice === 'function'
 
   /** Listeyi yeniler; başarısızsa bildirir ve false döner (başarı bildirimi yalnızca true'da gösterilir). */
   const refresh = useCallback(async () => {
@@ -746,6 +1151,7 @@ export default function Voices({ voices, languages, health, styles: stylesProp, 
           <ul className="list">
             {voices.map((v) => (
               <VoiceCard key={v.id} v={v} languages={languages} emotions={emotions} styles={styles}
+                nvItems={nvItems} nvEnabled={nvEnabled} enhanceEnabled={enhanceEnabled}
                 fresh={fresh?.id === v.id ? fresh : null} refresh={refresh} notify={notify} />
             ))}
           </ul>

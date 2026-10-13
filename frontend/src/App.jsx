@@ -1,16 +1,46 @@
-import { Component, Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Component, Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { api, getApiKey, setApiKey } from './api'
 import Voices from './components/Voices'
 import Generate from './components/Generate'
+import Dialog from './components/Dialog'
 import Convert from './components/Convert'
 import History from './components/History'
 
+/* Telaffuz sekmesi (components/Lexicon.jsx) ayrı bir geliştiriciden gelir. Dosya henüz yoksa da derleme kırılmasın:
+   düz `import()` eksik dosyada Rollup çözümleme hatası verir, import.meta.glob ise boş döner. Dosya gelince
+   (geliştirmede anında, derlemede bir sonraki build'de) kendiliğinden yüklenir. */
+const lexiconModules = import.meta.glob('./components/Lexicon.jsx')
+const LexiconPending = () => (
+  <section className="card"><div className="empty"><strong>Telaffuz sekmesi yükleniyor…</strong></div></section>
+)
+const LexiconFailed = () => (
+  <section className="card">
+    <div className="empty">
+      <strong>Telaffuz sekmesi yüklenemedi.</strong>
+      <span className="small">Sayfayı yenileyip tekrar deneyin.</span>
+      <button type="button" className="btn primary small" onClick={() => window.location.reload()}>Sayfayı yenile</button>
+    </div>
+  </section>
+)
+const Lexicon = lazy(() => {
+  const load = lexiconModules['./components/Lexicon.jsx']
+  if (!load) return Promise.resolve({ default: LexiconPending })
+  return load().catch((err) => {
+    console.error('Telaffuz sekmesi yüklenemedi:', err)
+    return { default: LexiconFailed }
+  })
+})
+
 const TABS = [
   { id: 'generate', label: 'Seslendir', hash: 'seslendir', key: '1' },
-  { id: 'voices', label: 'Sesler', hash: 'sesler', key: '2' },
-  { id: 'convert', label: 'Dönüştür', hash: 'donustur', key: '3' },
-  { id: 'history', label: 'Geçmiş', hash: 'gecmis', key: '4' },
+  { id: 'dialog', label: 'Diyalog', hash: 'diyalog', key: '2' },
+  { id: 'voices', label: 'Sesler', hash: 'sesler', key: '3' },
+  { id: 'lexicon', label: 'Telaffuz', hash: 'telaffuz', key: '4' },
+  { id: 'convert', label: 'Dönüştür', hash: 'donustur', key: '5' },
+  { id: 'history', label: 'Geçmiş', hash: 'gecmis', key: '6' },
 ]
+// Seslendir ve Diyalog sekmeleri gizlenince kapanmaz (süren üretim korunur); diğerleri açılıp kapanır.
+const KEEP_ALIVE = new Set(['generate', 'dialog'])
 const GEN_PAGE = 50 // History'nin sayfa boyutuyla aynı
 const THEME_KEY = 'sesklon_theme'
 const GUIDE_KEY = 'sesklon_guide_hidden'
@@ -18,13 +48,10 @@ const READY_KEY = 'sesklon_model_ready_once'
 const THEME_COLORS = { dark: '#0d0f14', light: '#f6f7fb' }
 
 const SHORTCUTS = [
-  { keys: ['1'], desc: 'Seslendir sekmesi' },
-  { keys: ['2'], desc: 'Sesler sekmesi' },
-  { keys: ['3'], desc: 'Dönüştür sekmesi' },
-  { keys: ['4'], desc: 'Geçmiş sekmesi' },
+  ...TABS.map((t) => ({ keys: [t.key], desc: `${t.label} sekmesi` })),
   { keys: ['?'], desc: 'Bu kısayol listesini aç / kapat' },
   { keys: ['Esc'], desc: 'Açık pencereyi kapat' },
-  { keys: ['Ctrl', 'Enter'], sep: '+', desc: 'Metni seslendir (metin kutusundayken)' },
+  { keys: ['Ctrl', 'Enter'], sep: '+', desc: 'Metni / diyaloğu seslendir (metin kutusundayken)' },
   { keys: ['Boşluk'], desc: 'Oynat / duraklat (oynatıcı odaklıyken)' },
   { keys: ['←', '→'], sep: '/', desc: '5 sn geri / ileri (oynatıcı odaklıyken)' },
   { keys: ['/'], desc: 'Geçmişte ara (Geçmiş sekmesinde)' },
@@ -291,6 +318,9 @@ export default function App() {
   const [theme, setTheme] = useState(readTheme)
   const [guideHidden, setGuideHidden] = useState(() => store.get(GUIDE_KEY) === '1')
   const [readyOnce, setReadyOnce] = useState(() => store.get(READY_KEY) === '1')
+  // Diyalog sekmesi ilk açılışta kurulur, sonra hiç kapanmaz (yalnızca gizlenir) — süren üretim korunur.
+  const [dialogOn, setDialogOn] = useState(tab === 'dialog')
+  if (tab === 'dialog' && !dialogOn) setDialogOn(true)
 
   const toastTimers = useRef(new Map())
   const statsTimer = useRef(0)
@@ -635,16 +665,28 @@ export default function App() {
           </div>
         ) : (
           <>
-            {/* Seslendir sekmesi hiç kapanmaz (yalnızca gizlenir): süren üretim, ilerleme, iptal ve canlı önizleme
-                başka sekmeye geçince kaybolmaz. Diğer sekmeler hafiftir, açılıp kapanabilir. */}
+            {/* Seslendir ve Diyalog sekmeleri hiç kapanmaz (yalnızca gizlenir): süren üretim, ilerleme, iptal ve canlı
+                önizleme başka sekmeye geçince kaybolmaz. Diyalog ilk ziyarette kurulur. Diğer sekmeler hafiftir, açılıp kapanabilir. */}
             <div hidden={tab !== 'generate'}>
               <TabBoundary key="generate">
                 <Generate voices={voices} languages={languages} maxChars={health?.max_text_chars || 5000} health={health} onGenerated={onGenerated} notify={notify} active={tab === 'generate'} />
               </TabBoundary>
             </div>
-            {tab !== 'generate' && (
+            {dialogOn && (
+              <div hidden={tab !== 'dialog'}>
+                <TabBoundary key="dialog">
+                  <Dialog voices={voices} languages={languages} health={health} onGenerated={onGenerated} notify={notify} />
+                </TabBoundary>
+              </div>
+            )}
+            {!KEEP_ALIVE.has(tab) && (
               <TabBoundary key={tab}>
                 {tab === 'voices' && <Voices voices={voices} languages={languages} health={health} styles={styles} reload={loadVoices} notify={notify} />}
+                {tab === 'lexicon' && (
+                  <Suspense fallback={<LexiconPending />}>
+                    <Lexicon voices={voices} health={health} notify={notify} />
+                  </Suspense>
+                )}
                 {tab === 'convert' && <Convert voices={voices} health={health} onGenerated={onGenerated} notify={notify} />}
                 {tab === 'history' && (
                   <History items={gens} languages={languages} reload={loadGens} notify={notify} voices={voices} styles={styles} onReuse={onReuse} />
