@@ -3,6 +3,29 @@
 Bu dosyadaki önemli değişiklikler sürüm sürüm listelenir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/)
 düzenine, sürüm numaraları [Anlamsal Sürümleme](https://semver.org/lang/tr/)'ye uyar.
 
+## 4.1.0 — 2026-10-13
+
+"Ölçüm ve ince ayar" sürümü. Gerçek modelde (M2 Pro) Türkçe çıktının tonlama aralığı 13,5 yarım tonda kaldı (Gemini TTS
+17,6); ayarlar bunu değiştirmiyor. Bu sürüm sorunu ölçülebilir kılar ve modelin kendisini iyileştirecek hattı ekler.
+Mevcut istekler ve varsayılan davranış değişmez.
+
+### Eklendi
+
+- **Takılabilir model arka uçları** (`TTS_BACKEND`): `chatterbox` (PyTorch, varsayılan), `chatterbox-mlx` (Apple Silicon
+  için MLX — mps yavaşlığına çözüm), `f5-tr` (F5-TTS Türkçe) ve `xtts` (XTTS-v2); son ikisi yalnızca A/B kıyas içindir
+  (ticari olmayan lisans). `/api/health` arka ucu, kurulu arka uçları ve lisanslarını bildirir.
+- **İnce ayarlı model desteği:** `T3_FINETUNED` ile LoRA/tam ince ayarlı T3 ağırlıkları yüklenir (önek soyma, eşleşme
+  denetimi, Türkçe hata mesajları); `T3_EMOTION_TAGS=1` duygu etiketli eğitim verisiyle aynı `[duygu]` önekini ekler.
+  `CHATTERBOX_LOCAL_DIR` ile ağırlıklar yerel klasörden.
+- **Doğallık kıyaslaması** (`python -m app.bench`): 37 Türkçe cümle (12 kategori), cümle başına tonlama aralığı, perde
+  sapması, hece/sn, dinamik aralık, RTF ve kalite kontrol; özet karar ve öneriler; `--compare`, `--reference-only`,
+  `--pipeline`, `--repeat`.
+- **İnce ayar hattı** (`finetune/`): 20 duygu × 30 cümlelik kayıt senaryosu bankası ve oturum planlayıcı
+  (`senaryo.py`), kayıtları denetleyip LJSpeech veri setine çeviren `hazirla.py` (SNR, kırpılma, süre, ifade denetimi),
+  `egit.sh` (gokhaneraslan/chatterbox-finetuning; Multilingual taban yaması `MTL_TABAN=1`), kabul ölçütlü
+  `degerlendir.py` (≥ 17 yarım ton) ve Türkçe rehber.
+- Analizde `f0.std_semitones` (tonlama canlılığı).
+
 ## 4.0.0 — 2026-10-13
 
 "Diyalog" sürümü: çok konuşmacılı diyalog, kendi kaydınızla gerçek tepkiler ve duygunun şiddetini, karışımını ve

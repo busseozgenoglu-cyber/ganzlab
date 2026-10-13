@@ -38,7 +38,7 @@ ters vekil koyun.
 
 | Metot | Yol | Açıklama |
 |---|---|---|
-| GET | `/api/health` | Cihaz, model durumu, diller, etiket ve stil kataloğu, özellikler |
+| GET | `/api/health` | Cihaz, model ve arka uç durumu, diller, etiket ve stil kataloğu, özellikler |
 | POST | `/api/warmup` | Modeli yükle |
 | GET | `/api/stats` | Sayılar: ses, kayıt, üretim, favori, toplam süre |
 | GET | `/api/voices` | Sesler |
@@ -79,9 +79,13 @@ Arayüzün açılışta ve düzenli aralıklarla sorguladığı durum bilgisi. D
 ```json
 {
   "ok": true,
-  "version": "4.0.0",
+  "version": "4.1.0",
   "device": "cuda",
   "model": "chatterbox-multilingual-v3",
+  "backend": "chatterbox",
+  "backends": [{"name": "chatterbox", "label": "Chatterbox Multilingual (PyTorch)", "license": "MIT — ticari kullanım serbest",
+                "commercial": true, "emotion_controls": true, "available": true, "reason": "kurulu"}],
+  "finetuned": false,
   "model_loaded": true,
   "model_loading": false,
   "model_error": null,

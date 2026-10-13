@@ -115,7 +115,9 @@ _ALIASES = {
 
 
 def normalize_name(name: str | None) -> str:
-    key = (name or "").strip().lower().replace("_", "-")
+    from ..tr import tr_lower
+
+    key = tr_lower((name or "").strip()).replace("_", "-")
     key = _ALIASES.get(key, key)
     if key not in REGISTRY:
         raise KeyError(f"Bilinmeyen arka uç: '{name}'. Seçenekler: {', '.join(REGISTRY)}")

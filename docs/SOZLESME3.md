@@ -68,7 +68,7 @@ Kurallar:
 Komut satırı (backend klasöründen):
 
 ```
-python -m app.bench --backend fake --out sonuc.json                 # cümle seti: data/bench_tr.txt
+python -m app.bench --backend fake --out sonuc.json                 # cümle seti: app/bench_tr.txt
 python -m app.bench --backend chatterbox --ref ses.wav --exaggeration 0.8 --cfg-weight 0.3 --out b.json
 python -m app.bench --backend chatterbox --ref ses.wav --pipeline --out c.json   # tüm motor zinciri (prozodi vb.)
 python -m app.bench --reference-only sakin.wav coskulu.wav           # model yok: referans kayıtlarının ifade ölçümü
@@ -79,7 +79,7 @@ Seçenekler: `--sentences DOSYA`, `--limit N`, `--repeat N` (aynı cümleyi N ke
 `--exaggeration/--cfg-weight/--temperature/--seed`, `--emotion-tags` (cümle etiketlerini metinde bırak),
 `--pipeline` (Engine.synthesize ile; `--style` geçer), `--device`, `--out`, `--quiet`.
 
-Cümle dosyası `backend/data/bench_tr.txt`: `kategori|cümle` satırları (`#` yorum). En az 24 cümle; kategoriler:
+Cümle dosyası `backend/app/bench_tr.txt`: `kategori|cümle` satırları (`#` yorum). En az 24 cümle; kategoriler:
 nötr, soru, ünlem, üzgün, mutlu, heyecanlı, kızgın, fısıltı, sakin, uzun (≥ 120 kar.), sayı/kısaltma
 (normalizasyon), günlük (napıyosun vb.). Cümleler `[duygu]` etiketi TAŞIMAZ; etiket `--emotion-tags` ile kategoriden
 üretilir (nötr/soru/ünlem/uzun/sayı/günlük → etiket yok).

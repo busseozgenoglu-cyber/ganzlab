@@ -1,0 +1,57 @@
+# SesKlon kıyaslama cümle seti (python -m app.bench) — docs/SOZLESME3.md §3
+#
+# Biçim: her satır "kategori|cümle". '#' ile başlayan satırlar yorumdur, boş satırlar atlanır.
+# Kategoriler: nötr, soru, ünlem, üzgün, mutlu, heyecanlı, kızgın, fısıltı, sakin, uzun (≥ 120 karakter),
+#              sayı (sayı/saat/yüzde/kısaltma — metin normalizasyonu), günlük (konuşma dili: napıyosun, bi' dakka).
+# Cümleler [duygu] etiketi TAŞIMAZ: --emotion-tags verilirse üzgün/mutlu/heyecanlı/kızgın/fısıltı/sakin
+# kategorilerinde metnin başına "[kategori] " eklenir; diğer kategoriler etiketsiz kalır.
+# Cümle ekleyip çıkarmak kimlikleri (n01, n02, …) kaydırır: eski sonuçlarla --compare yaparken aynı dosyayı kullanın.
+
+nötr|Bugün öğleden sonra markete uğrayıp eksikleri alacağım.
+nötr|Toplantı yarın sabaha ertelendi, salonda bir değişiklik yok.
+nötr|Kitabı bitirince kütüphaneye geri götürmeyi unutma.
+
+soru|Bu akşam yemeğe ne yapsak, aklında bir şey var mı?
+soru|Sen gerçekten bunu tek başına mı hallettin?
+soru|Treni kaçırırsak bir sonrakini mi bekleriz, yoksa otobüse mi bineriz?
+
+ünlem|Aman dikkat et, ocağın üstü çok sıcak!
+ünlem|Vay be, bu manzarayı hiç beklemiyordum!
+ünlem|Hadi ama, bir kere de zamanında gel!
+
+üzgün|Ondan haber alamayalı neredeyse bir yıl oldu...
+üzgün|Bahçedeki yaşlı ceviz ağacını kesmişler, sanki çocukluğum da gitti.
+üzgün|Elimden geleni yaptım ama yetmedi, ne yazık ki.
+
+mutlu|Sonunda kabul mektubu geldi, okula gidiyorum!
+mutlu|Bugün annemin doğum günü, bütün aile bir araya toplandık.
+mutlu|Seni tekrar görmek ne kadar güzel, hiç değişmemişsin.
+
+heyecanlı|Biletler satışa çıktı, çabuk ol, yer kalmadan alalım!
+heyecanlı|Işıklar söndü, perde açılıyor, işte başlıyor!
+heyecanlı|Son saniyede gol geldi, maçı aldık, inanamıyorum!
+
+kızgın|Kaç kere söyledim, kapıyı açık bırakma diye!
+kızgın|Bu kadar beklettikten sonra bir özür bile dilemiyor musun?
+kızgın|Yeter artık, her seferinde aynı bahaneyi dinlemek istemiyorum!
+
+fısıltı|Sessiz ol, bebek daha yeni uyudu.
+fısıltı|Arkana bakma, sanırım bizi izliyorlar.
+fısıltı|Sana bir sır vereceğim ama kimseye söylemek yok, tamam mı?
+
+sakin|Derin bir nefes al, acele etmeden anlat bakalım.
+sakin|Akşamüstü deniz kenarında yürümek bana çok iyi geliyor.
+sakin|Merak etme, her şey zamanla yoluna girecek.
+
+uzun|Sabah erkenden yola çıktık; önce sahil yolundan ilerledik, sonra tepeye tırmanan dar bir patikaya saptık ve öğleye doğru, hiç beklemediğimiz bir anda karşımıza küçük bir köy çıktı.
+uzun|Eğer bu işi zamanında bitirmek istiyorsak, herkesin kendi payına düşeni bu hafta içinde tamamlaması ve cuma günü sonuçları birlikte gözden geçirmemiz gerekiyor.
+uzun|Dedem anlatırdı: kış geceleri soba başında toplanır, kestane közler, radyodan gelen eski şarkıları dinlerken kimin daha güzel hikâye anlatacağını tartışırlarmış.
+
+sayı|Toplantı 14:30'da başlıyor, lütfen 10 dakika önce gelin.
+sayı|Kira geçen yıla göre %12 arttı, faturalar da cabası.
+sayı|Pazardan 3,5 kg domates aldım, hepsi 87,50 TL tuttu.
+sayı|Dr. Aydın'ın muayenehanesi 3. katta, 2024'ten beri aynı adreste.
+
+günlük|Napıyosun ya, bi' dakka gelsene buraya.
+günlük|Valla bilmiyorum abi, sen bi' baksana şuna.
+günlük|Tamam tamam, geliyorum, iki dakka bekle!

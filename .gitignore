@@ -28,3 +28,14 @@ backend/data/
 Thumbs.db
 .idea/
 *.swp
+
+# İnce ayar hattı çalışma dosyaları (kayıtlar, hazırlanmış veri, eğitim deposu, çıktılar)
+finetune/chatterbox-finetuning/
+finetune/MyTTSDataset/
+finetune/kayitlar/
+finetune/senaryo/
+finetune/rapor.json
+kayitlar/
+senaryo/
+MyTTSDataset/
+chatterbox_output/
