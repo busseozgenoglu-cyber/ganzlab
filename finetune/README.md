@@ -33,9 +33,12 @@ Ayarla çözülmeyen bir öncelik ancak veriyle değişir: model, aynı mimariyl
 | Tonlama aralığı medyanı (`range_semitones_median`) | 13,5 st | **≥ 17 st** ve temelden geniş |
 | Kalite kontrolden geçemeyen cümle (`qc_fail_count`) | ölçülen | **artmamış** (yutulan/tekrarlanan sözcük yok) |
 | Hece/sn ortalaması (`syllables_per_sec_mean`) | ölçülen | **3,5–6,5** (doğal konuşma hızı) |
+| Üretilemeyen cümle (`errors`) / başarıyla ölçülen cümle (`n`) | ölçülen | hata **artmamış**, `n` **azalmamış** |
 
-`degerlendir.py` bu dört koşulu (aralık ≥ 17, QC artmamış, hece/sn aralıkta, aralık > temel) birlikte denetler; biri
-bile kalırsa sonuç RET'tir ve nedeni Türkçe yazılır.
+`degerlendir.py` bu koşulların hepsini birlikte denetler (üretim hatası artmamış, ölçülen cümle sayısı azalmamış,
+aralık ≥ 17, QC artmamış, hece/sn aralıkta, aralık > temel); biri bile kalırsa sonuç RET'tir ve nedeni Türkçe yazılır.
+Hata ve cümle sayısı ayrıca denetlenir, çünkü kıyaslama özeti hata veren cümleleri dışarıda bırakır: 50 cümleden 38'i
+hata verip 12'si iyi çıkan bir model, yalnız o 12 cümleyle "ifadeli" görünmemeli.
 
 ## Önce ucuz deney: ifadeli referans
 
@@ -64,6 +67,20 @@ python -m app.bench --compare temel.json ref_coskulu.json            # temel ↔
 - **30 dakika** (zorunlu en az): yalnızca ses rengi uyumu (klon benzerliği) iyileşir; tonlama aralığı belirgin artmaz.
 - Kayıt kalitesi: SNR ≥ 20 dB, kırpılma yok, cümle başına 1–12 sn (ideal 3–10 sn). `hazirla.py` bu eşiklerin altını
   reddeder; ayrıntılı kayıt ortamı için [docs/KAYIT_REHBERI.md](../docs/KAYIT_REHBERI.md).
+- **Kayıt adları ön ekli olmalı** (`normal_0001.wav`, `mutlu_0007.wav`), yalnız rakam (`0001.wav`) değil: eğitim deposu
+  `metadata.csv`'yi pandas ile okur ve tüm adlar rakamsa `0001`'i sayıya çevirip `1.wav` arar — kayıtlar bulunamaz.
+  `senaryo.py` adları zaten ön ekli üretir, `hazirla.py` rakamsal adlara ön ek ekler; `egit.sh` tümü rakam olan
+  adlarda Türkçe hatayla durur.
+
+### Transkriptsiz bölme
+
+Uzun bir kaydı (podcast, sesli kitap) metni olmadan parçalara böldüyseniz (`hazirla.py`'nin transkriptsiz bölme
+kipi), `metadata.csv`'de metin sütunları boş kalır (`id||`). Bu satırlar **eğitime giremez**: depo boş alanı pandas'ta
+`NaN` olarak okur ve modele "nan" metnini öğretir. `egit.sh` böyle satır görürse Türkçe hatayla durur. Önce metinleri
+Whisper ile doldurun (Türkçe için `large-v3` ya da `large-v3-turbo`; `language="tr"`), çıktıyı kulakla gözden geçirin
+(sayılar, özel adlar, yarım kalan sözcükler) ve `metadata.csv`'nin 2. ve 3. sütununa yazın — 3. sütun (normalize metin)
+için `app.textnorm.normalize` kullanın, ardından `hazirla.py`'yi o manifestle yeniden çalıştırın. Yanlış transkript
+modelin telaffuzunu bozar; emin olmadığınız parçaları atın.
 
 Önerilen duygu dağılımı (3 saat ≈ 180 dk ≈ 3 000 cümle; cümle başına ortalama 3,5 sn):
 
@@ -124,6 +141,13 @@ eğitim verisindeki biçimle metnin başına ekler (`[mutlu] Merhaba`); etiketsi
 - `--pipeline`: tüm motor zinciriyle (normalizasyon, prozodi, QC'li yeniden üretim) ölçer; `--limit N`, `--repeat N`,
   `--cumleler DOSYA`, `--cihaz` de vardır. `--arka-uc fake` model gerektirmeyen kuru çalışmadır (hattı denemek için).
 - Temel koşuda `T3_FINETUNED` boşaltılır, ince koşuda dosya yoluna ayarlanır; iş bitince ortam eski hâline döner.
+- **İki koşu aynı metni alır.** `--etiketli` yalnız ince koşunun arka ucunda `T3_EMOTION_TAGS=1` açar: ham modda metin
+  iki koşuda da etiketsizdir, cümlenin duygusu `emotion` parametresiyle gider ve ince ayarlı arka uç `[mutlu] `
+  önekini kendisi ekler. `--pipeline --etiketli` ile metin iki koşuda da `[duygu] …` olur; motor etiketi iki koşuda da
+  aynı duygu profili olarak uygular (temel model etiketi görmez, yalnız profil değişir).
+- `--temel x.json` (ya da `--ince-sonuc`) ile hazır bir sonuç kullanılınca, onun ayarları (boru hattı, referans dosya
+  adı, tohum, cümle dosyası ve sayısı, exaggeration / cfg_weight / temperature, tekrar, metin etiketi) yeni koşuyla
+  karşılaştırılır; fark varsa "kıyas adil olmayabilir" uyarısı yazılır ve `rapor.json`'daki `uyarilar`'a eklenir.
 
 ### egit.sh ayarları
 
@@ -138,9 +162,17 @@ eğitim verisindeki biçimle metnin başına ekler (`[mutlu] Merhaba`); etiketsi
 | `TAM_INCE_AYAR` | 0 | 1 = tüm T3 ağırlıkları (çok bellek; > 10 saat veri için) |
 | `MTL_TABAN` | 1 | Multilingual T3 tabanından eğit (aşağıdaki bulguya bakın) |
 | `MTL_T3_SURUM` | v3 | SesKlon'un `T3_MODEL`'iyle aynı olmalı |
-| `ON_ISLEME` | otomatik | Veri ya da taban değişince belirteçleri yeniden çıkarır; 1 = zorla, 0 = atla |
+| `ON_ISLEME` | otomatik | Veri (`metadata.csv` sha256) ya da taban değişince belirteçleri yeniden çıkarır; 1 = zorla, 0 = atla |
+| `ISCI` | deponunki (8) | Veri yükleyici işçi sayısı; 0 da olur (`persistent_workers` buna göre yamalanır) |
 | `DEPO_DIZIN` | `finetune/chatterbox-finetuning` | Eğitim deposunun klonlandığı yer |
 | `ADIM` | hepsi | `kur` / `egit` / `birlestir` / `hepsi` / `yamala` (yalnızca yama + etkin ayarlar) |
+
+Ön işleme çalışacaksa `egit.sh` önce `MyTTSDataset/preprocess/` içindeki **eski `.pt` dosyalarını siler**: depo
+klasördeki bütün `.pt`'leri eğitime alır; reddedilen klipler, doğrulama klipleri ya da başka tabanla
+(`MTL_TABAN` değişimi) çıkarılmış belirteçler sızmasın. Ön işlemenin neyle yapıldığı `preprocess/.sesklon_taban`
+dosyasında (taban + `metadata.csv` sha256) tutulur. Eğitim bitince taban `chatterbox_output/sesklon_taban.txt`'ye
+yazılır; `ADIM=birlestir` farklı bir `MTL_TABAN` / `MTL_T3_SURUM` / `TAM_INCE_AYAR` ile çağrılırsa Türkçe hatayla
+durur ve doğru komutu söyler; sondaki `T3_MODEL` önerisi eğitimdeki sürümdür.
 
 `egit.sh` deponun `src/config.py` dosyasını her çalıştırmada git'ten geri alıp yeniden yamalar; o dosyayı elle
 düzenlemeyin, değişkenleri kullanın. Bulunamayan anahtar için uyarı verir ve devam eder. Günlükler:
@@ -212,8 +244,15 @@ artırmak (15–20) yardımcı olabilir ama QC başarısızlıkları artarsa ger
 **Etiket sesli okunuyor ("köşeli parantez mutlu …").** Model etiketsiz veriyle eğitilmiş ama `T3_EMOTION_TAGS=1`
 açık — kapatın; ya da veriyi `hazirla.py --etiket` ile yeniden hazırlayıp eğitin.
 
+**`ValueError: persistent_workers option needs num_workers > 0`.** `ISCI=0` verilmiş ve deponun `train.py`'si
+değişmiş olduğu için `dataloader_persistent_workers` yamalanamamış; `egit.sh` bu durumda uyarıp `ISCI=1` kullanır.
+
+**Model "nan" diyor ya da boş metinli satır hatası.** Transkriptsiz bölünmüş klipler metinsiz kalmış; yukarıdaki
+[Transkriptsiz bölme](#transkriptsiz-bölme) notuna bakın.
+
 **Ön işleme çok az dosya işledi (`Preprocessing completed! Success: 120/3000`).** `metadata.csv`'deki adlar
-`wavs/` içindeki dosyalarla eşleşmiyor ya da dosyalar okunamıyor; günlükteki `Error (…)` satırlarına bakın.
+`wavs/` içindeki dosyalarla eşleşmiyor (rakamsal adlar: yukarıdaki not) ya da dosyalar okunamıyor; günlükteki
+`Error (…)` satırlarına bakın.
 Veriyi değiştirdikten sonra `ON_ISLEME=1` ile zorlayın.
 
 ## Multilingual taban notu (araştırma bulgusu)
@@ -273,7 +312,8 @@ güvenilmez kılar. Grafem sözlüğünün ilk 704 kimliğinin İngilizce sözl�
 3. Ön işleme: `text_to_tokens(clean_text)` → `text_to_tokens(clean_text, language_id="tr")` — SesKlon'un çıkarımdaki
    belirteçlemesiyle (küçük harf + NFKD + `[tr]`) birebir aynı.
 4. `train.py`: İngilizce dosya adlarını arayan `check_pretrained_models(...)` denetimi atlanır; `bf16=True` donanım
-   destekliyorsa açılacak biçimde değiştirilir.
+   destekliyorsa açılacak biçimde, `dataloader_persistent_workers=True` yalnız işçi varken açılacak biçimde
+   değiştirilir (bu iki yama `MTL_TABAN=0`'da da uygulanır).
 5. `src/chatterbox_/mtl_tts.py`: T3 dosya adı `MTL_T3_SURUM`'a göre (`t3_mtl23ls_v3.safetensors`), `ve.pt` / `s3gen.pt`
    `map_location="cpu"` ile yüklenir.
 6. `new_vocab_size=2454`: Multilingual T3 zaten 2454 belirteçli olduğundan yeniden boyutlandırma bir şey değiştirmez;

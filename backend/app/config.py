@@ -17,6 +17,7 @@ T3_MODEL = os.getenv("T3_MODEL", "v3")              # Chatterbox Multilingual v3
 TTS_BACKEND = os.getenv("TTS_BACKEND", "chatterbox").strip() or "chatterbox"
 T3_FINETUNED = os.getenv("T3_FINETUNED", "").strip() or None          # ince ayarlı T3 ağırlıkları (.safetensors / .pt)
 T3_EMOTION_TAGS = os.getenv("T3_EMOTION_TAGS", "0") == "1"           # ince ayar verisindeki "[mutlu] " öneki metne eklensin mi
+T3_EMOTION_SET = os.getenv("T3_EMOTION_SET", "").strip()  # etiket alacak duygular (virgüllü; boş = ince ayar bankasındaki 19 duygu)
 CHATTERBOX_LOCAL_DIR = os.getenv("CHATTERBOX_LOCAL_DIR", "").strip() or None   # tüm ağırlıklar yerel klasörden
 MLX_MODEL = os.getenv("MLX_MODEL", "mlx-community/chatterbox-multilingual-v3").strip()
 F5_TR_CKPT = os.getenv("F5_TR_CKPT", "").strip() or None              # F5-TTS Türkçe ağırlık dosyası (.safetensors)

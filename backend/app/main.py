@@ -311,7 +311,7 @@ def health():
         "model": eng.model_name,
         "backend": getattr(eng, "backend_name", config.TTS_BACKEND),
         "backends": _backend_catalog(),
-        "finetuned": bool(config.T3_FINETUNED),
+        "finetuned": bool(config.T3_FINETUNED) and getattr(eng, "backend_name", config.TTS_BACKEND) == "chatterbox",
         "model_loaded": eng.loaded,
         "model_loading": eng.loading,
         "model_error": eng.load_error,

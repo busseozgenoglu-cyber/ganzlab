@@ -29,7 +29,7 @@ gerçek nefesini verir. Sözleşme: ``docs/SOZLESME.md`` bölüm 4.
   düşer" hızına çevrilir; böylece gürültü tabanının yüksekliğinden bağımsız kalır. İniş bölgesi spektral olarak gürültü
   kadar düzse (spektral düzlük ≈ taban düzlüğü) o bitiş yankı kanıtı sayılmaz. Bitişlerin 75. yüzdeliği:
   > 25 dB düşük, 15–25 orta, < 15 yüksek.
-* F0: ``librosa.pyin`` (60–450 Hz), 16 kHz'e indirilmiş, ilk konuşmadan itibaren en fazla 30 sn; yalnızca konuşma
+* F0: ``librosa.pyin`` (60–600 Hz), 16 kHz'e indirilmiş, ilk konuşmadan itibaren en fazla 30 sn; yalnızca konuşma
   karelerindeki sesli kareler. ``range_semitones`` = p5–p95 aralığı (yarım ton), ``std_semitones`` = perdenin medyana
   göre yarım ton cinsinden standart sapması (tonlama canlılığı; kıyaslama betiği ``app.bench`` bunu kullanır). pyin nefesli/gürültülü seste sesli kare bulamazsa yin perdesi, o perdedeki
   periyodiklikle doğrulanarak kullanılır. Etiket: medyan < 165 erkek, > 185 kadın, arası belirsiz.
@@ -70,7 +70,7 @@ MAX_ANALYSIS_S = 180.0  # çerçeve analizi en fazla bu kadar (uzun dosyalarda b
 READ_MAX_S = 600.0  # analyze_reference en fazla bu kadarını okur
 F0_MAX_S = 30.0
 F0_SR = 16000
-F0_FMIN, F0_FMAX = 60.0, 450.0
+F0_FMIN, F0_FMAX = 60.0, 600.0  # tavan 600 Hz: yüksek perdeli (kadın/çocuk) ifadeli seste aralık sıkışmasın
 PAUSE_MIN_MS, PAUSE_MAX_MS = 150.0, 2500.0
 PAUSE_REF_MS = 400.0
 BREATH_MIN_MS, BREATH_MAX_MS = 120.0, 600.0
@@ -168,7 +168,7 @@ def _resample(x: np.ndarray, sr_from: int, sr_to: int) -> np.ndarray:
 
 
 def _nccf_max(seg: np.ndarray, sr: int) -> float:
-    """60–450 Hz gecikme aralığında normalize çapraz-korelasyonun en büyüğü (0: gürültü, 1: tam periyodik)."""
+    """60–600 Hz gecikme aralığında normalize çapraz-korelasyonun en büyüğü (0: gürültü, 1: tam periyodik)."""
     seg = np.asarray(seg, dtype=np.float64)
     seg = seg - seg.mean()
     n = len(seg)

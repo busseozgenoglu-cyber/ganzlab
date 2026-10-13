@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,25 @@ _KEY_PREFIXES = ("base_model.model.", "module.", "t3.")
 _WRAPPER_KEYS = ("state_dict", "model_state_dict", "model", "t3")
 # Yüklenen anahtarların en az bu oranı modelde bulunmalı; altı "yanlış dosya" demektir
 _MIN_MATCH_RATIO = 0.5
+
+# İnce ayar cümle bankasındaki (finetune/cumleler/*.txt) etiketli duygular; "normal" etiket almaz.
+# T3_EMOTION_SET boşsa yalnızca bunlar etikete dönüşür — modelin eğitimde görmediği önek metne girmez.
+DEFAULT_EMOTION_SET: tuple[str, ...] = (
+    "mutlu", "heyecanlı", "üzgün", "kızgın", "şaşkın", "korkmuş", "sakin", "ciddi", "samimi",
+    "fısıltı", "alaycı", "nazik", "gergin", "umutlu", "otoriter", "romantik", "nostaljik", "gururlu", "sıkılmış",
+)
+
+
+def _norm_emotion(name: Any) -> str:
+    """Duygu adını karşılaştırmaya hazırlar: NFC + Türkçe küçük harf + kırpma."""
+    return unicodedata.normalize("NFC", tr_lower(unicodedata.normalize("NFC", str(name)))).strip()
+
+
+def emotion_set() -> frozenset[str]:
+    """Etiket alacak duygular: ``T3_EMOTION_SET`` (virgüllü) ya da boşsa ``DEFAULT_EMOTION_SET``; ``normal`` hariç."""
+    raw = config.T3_EMOTION_SET or ""
+    items = [_norm_emotion(x) for x in str(raw).split(",")] if str(raw).strip() else list(DEFAULT_EMOTION_SET)
+    return frozenset(x for x in items if x and x != "normal")
 
 
 def _filter_kwargs(fn: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -226,13 +246,17 @@ class ChatterboxBackend(BaseBackend):
     def tag_text(text: str, emotion: str | None) -> str:
         """``T3_EMOTION_TAGS`` açıkken parça duygusunu ince ayar verisindeki biçimle ekler: ``"[mutlu] Merhaba"``.
 
-        ``normal`` ve boş duygu etiket almaz (veri hazırlama ile aynı kural); metin zaten etiketle başlıyorsa
-        ikinci kez eklenmez.
+        ``normal`` ve boş duygu etiket almaz (veri hazırlama ile aynı kural); yalnızca ``T3_EMOTION_SET``
+        kümesindeki (varsayılan: ince ayar bankasının 19 duygusu) duygular etiketlenir — modelin eğitimde görmediği
+        önek (örn. ``çocuksu``, ``vurgulu``) metne girmez. Metin zaten etiketle başlıyorsa ikinci kez eklenmez.
         """
         if not config.T3_EMOTION_TAGS or not emotion:
             return text
-        tag = tr_lower(str(emotion)).strip()
+        tag = _norm_emotion(emotion)
         if not tag or tag == "normal":
+            return text
+        if tag not in emotion_set():
+            log.debug("Duygu etiketi eklenmedi: '%s' ince ayar duygu kümesinde yok (T3_EMOTION_SET)", tag)
             return text
         if text.lstrip().startswith(f"[{tag}]"):
             return text
@@ -256,10 +280,11 @@ class ChatterboxBackend(BaseBackend):
     def info(self) -> dict[str, Any]:
         d = super().info()
         d.update({"finetuned": self.finetuned, "t3_model": self.t3_model,
-                  "emotion_tags": bool(config.T3_EMOTION_TAGS), "local_dir": self.local_dir})
+                  "emotion_tags": bool(config.T3_EMOTION_TAGS), "emotion_set": sorted(emotion_set()),
+                  "local_dir": self.local_dir})
         if self.finetune_report:
             d["finetune_keys"] = {k: self.finetune_report[k] for k in ("matched", "missing", "unexpected")}
         return d
 
 
-__all__ = ["ChatterboxBackend", "load_finetuned_t3", "strip_key_prefixes"]
+__all__ = ["ChatterboxBackend", "DEFAULT_EMOTION_SET", "emotion_set", "load_finetuned_t3", "strip_key_prefixes"]

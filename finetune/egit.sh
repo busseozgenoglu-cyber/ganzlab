@@ -112,7 +112,8 @@ MODEL_DIZIN="$DEPO_DIZIN/pretrained_models"
 CIKTI_DIZIN="$DEPO_DIZIN/chatterbox_output"
 GUNLUK_DIZIN="$DEPO_DIZIN/gunlukler"
 ON_ISLEME_DIZIN="$VERI/preprocess"
-ON_ISLEME_ISARET="$ON_ISLEME_DIZIN/.sesklon_taban"
+ON_ISLEME_ISARET="$ON_ISLEME_DIZIN/.sesklon_taban"     # "TABAN_KIMLIK metadata.csv-sha256": ön işleme neyle yapıldı
+TABAN_KAYDI="$CIKTI_DIZIN/sesklon_taban.txt"           # eğitimin tabanı; birlestir bununla karşılaştırır
 if [ "$MTL_TABAN" = "1" ]; then TABAN_KIMLIK="mtl-$MTL_T3_SURUM-$DIL"; else TABAN_KIMLIK="en-t3_cfg"; fi
 ETIKETLI=0
 
@@ -207,8 +208,15 @@ degerler = {
 }
 if os.environ.get("SK_LR"):
     degerler["learning_rate"] = float(os.environ["SK_LR"])
+KALICI = re.compile(r"\bdataloader_persistent_workers=True,")
 if os.environ.get("SK_ISCI"):
-    degerler["dataloader_num_workers"] = int(os.environ["SK_ISCI"])
+    isci = int(os.environ["SK_ISCI"])
+    egitim_yol = depo / "train.py"
+    if isci == 0 and not (egitim_yol.is_file() and KALICI.search(egitim_yol.read_text(encoding="utf-8"))):
+        # persistent_workers=True işçisiz (0) yükleyiciyle hata verir; yamalanamıyorsa en az 1 işçi
+        uyari("ISCI=0 ama train.py'deki 'dataloader_persistent_workers=True,' yamalanamıyor — ISCI=1 kullanılıyor.")
+        isci = 1
+    degerler["dataloader_num_workers"] = isci
 
 cfg_yol = depo / "src" / "config.py"
 metin = cfg_yol.read_text(encoding="utf-8")
@@ -265,7 +273,7 @@ for yol in betikler:
         bilgi(f"{yol.relative_to(depo)} zaten yamalı (git yok) — atlandı.")
         continue
     yeni = eski
-    sayac = {"ice_aktar": 0, "belirtec": 0, "denetim": 0, "bf16": 0}
+    sayac = {"ice_aktar": 0, "belirtec": 0, "denetim": 0, "bf16": 0, "kalici_isci": 0}
 
     # bf16 yalnızca Ampere+ GPU'da var; T4/V100/cpu'da Trainer hata verir → donanım destekliyorsa aç
     if yol.name == "train.py":
@@ -273,6 +281,9 @@ for yol in betikler:
             "bf16=bool(torch.cuda.is_available() and torch.cuda.is_bf16_supported()),", yeni)
         if not sayac["bf16"]:
             uyari("train.py'de 'bf16=True,' bulunamadı — bf16 ayarı olduğu gibi bırakıldı.")
+        # persistent_workers yalnız işçi varken geçerli (ISCI=0 → torch "persistent_workers requires num_workers > 0")
+        yeni, sayac["kalici_isci"] = KALICI.subn(
+            "dataloader_persistent_workers=bool(cfg.dataloader_num_workers > 0),", yeni)
 
     if mtl:
         def ice_aktar(m):
@@ -422,6 +433,27 @@ veri_denetle() {
     [ "${satir:-0}" -gt 0 ] || hata "$VERI/metadata.csv boş."
     bilgi "Veri: $VERI — $satir satır, $wav WAV."
     [ "$wav" -ge "$satir" ] || uyari "WAV sayısı ($wav) metadata satırından ($satir) az; eksik dosyalar ön işlemede atlanır."
+    # Boş metin: depo metadata.csv'yi pandas ile okur, boş alan NaN → "nan" metniyle eğitilirdi
+    local bos
+    bos="$(awk -F'|' '/^[[:space:]]*$/ { next }
+        { r = $2; n = $3; gsub(/^[ \t\r]+|[ \t\r]+$/, "", r); gsub(/^[ \t\r]+|[ \t\r]+$/, "", n)
+          if (NF < 3 || r == "" || n == "") { c++; if (c <= 3) ids = ids (ids ? ", " : "") $1 } }
+        END { if (c) print c " satır (ilk: " ids ")" }' "$VERI/metadata.csv")"
+    [ -z "$bos" ] || hata "metadata.csv'de metni boş satırlar var: $bos. Eğitim deposu bunları 'nan' metniyle" \
+        "eğitirdi. Önce ASR ile doldurun (Whisper; finetune/README.md → Transkriptsiz bölme) ya da bu satırları çıkarın."
+    # Yalnız rakamdan oluşan adlar: pandas '0001'i sayı okur → '1.wav' aranır, kayıt bulunamaz
+    local sayisal
+    sayisal="$(awk -F'|' '/^[[:space:]]*$/ { next } { t++ } $1 ~ /^[0-9]+$/ { c++; if (c <= 3) ids = ids (ids ? ", " : "") $1 }
+        END { if (c) print (c == t ? "hepsi " : "bazı ") c "/" t " (ilk: " ids ")" }' "$VERI/metadata.csv")"
+    if [ -n "$sayisal" ]; then
+        case "$sayisal" in
+            hepsi*) hata "Tüm kayıt adları yalnız rakam: $sayisal. Eğitim deposu metadata.csv'yi pandas ile okur;" \
+                "'0001' sayıya çevrilip '1.wav' aranır ve kayıtlar bulunamaz. Adlara ön ek verin (örn. normal_0001) ve" \
+                "hazirla.py'yi yeniden çalıştırın." ;;
+            *) uyari "Yalnız rakamdan oluşan kayıt adları var: $sayisal (karışık sütunda pandas metin okur, sorun" \
+                "beklenmez; yine de ön ekli ad önerilir)." ;;
+        esac
+    fi
     if grep -q '|\[' "$VERI/metadata.csv"; then
         ETIKETLI=1
         bilgi "Metinlerde duygu etiketi var ([mutlu] …): SesKlon'u T3_EMOTION_TAGS=1 ile çalıştırın."
@@ -431,17 +463,63 @@ veri_denetle() {
     fi
 }
 
-on_isleme_karari() {
+veri_ozeti() {   # metadata.csv'nin sha256 özeti (veri değişti mi?)
+    "$(yama_python)" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+        "$VERI/metadata.csv"
+}
+
+on_isleme_karari() {   # on_isleme_karari BEKLENEN_ISARET → 1 (yeniden ön işle) | 0 (atla)
+    local beklenen="$1" guncel=1
+    if ls "$ON_ISLEME_DIZIN"/*.pt >/dev/null 2>&1 && [ -f "$ON_ISLEME_ISARET" ] \
+        && [ "$(cat "$ON_ISLEME_ISARET")" = "$beklenen" ]; then
+        guncel=0
+    fi
     case "$ON_ISLEME" in
         1) echo 1 ;;
-        0) echo 0 ;;
-        *)
-            if ! ls "$ON_ISLEME_DIZIN"/*.pt >/dev/null 2>&1; then echo 1
-            elif [ ! -f "$ON_ISLEME_ISARET" ] || [ "$(cat "$ON_ISLEME_ISARET")" != "$TABAN_KIMLIK" ]; then echo 1
-            elif [ "$VERI/metadata.csv" -nt "$ON_ISLEME_ISARET" ]; then echo 1
-            else echo 0
-            fi ;;
+        0)
+            [ "$guncel" = 0 ] || uyari "ON_ISLEME=0 ama ön işleme dosyaları bu veri/taban ($TABAN_KIMLIK) için değil;" \
+                "eski belirteçlerle eğitilecek. Emin değilseniz ON_ISLEME=1."
+            echo 0 ;;
+        *) echo "$guncel" ;;
     esac
+}
+
+on_isleme_temizle() {   # depo ChatterboxDataset'ı klasördeki TÜM .pt'leri okur: eskiler (reddedilen, doğrulama,
+                        # önceki taban) eğitime sızmasın diye ön işlemeden önce silinir
+    rm -f "$ON_ISLEME_ISARET"
+    [ -d "$ON_ISLEME_DIZIN" ] || return 0
+    local n
+    n="$(find "$ON_ISLEME_DIZIN" -maxdepth 1 -type f -name '*.pt' | wc -l | tr -d ' ')"
+    if [ "$n" -gt 0 ]; then
+        bilgi "Eski ön işleme dosyaları siliniyor: $n .pt ($ON_ISLEME_DIZIN)."
+        find "$ON_ISLEME_DIZIN" -maxdepth 1 -type f -name '*.pt' -delete
+    fi
+}
+
+taban_kaydet() {
+    mkdir -p "$CIKTI_DIZIN"
+    printf 'MTL_TABAN=%s\nMTL_T3_SURUM=%s\nDIL=%s\nTAM_INCE_AYAR=%s\nTABAN_KIMLIK=%s\n' \
+        "$MTL_TABAN" "$MTL_T3_SURUM" "$DIL" "$TAM_INCE_AYAR" "$TABAN_KIMLIK" > "$TABAN_KAYDI"
+}
+
+taban_dogrula() {   # birlestir: eğitimdeki taban ortamdakiyle aynı mı?
+    if [ ! -f "$TABAN_KAYDI" ]; then
+        uyari "Eğitim tabanı kaydı yok ($TABAN_KAYDI): eğitim elle ya da egit.sh'ın eski sürümüyle yapılmış;" \
+              "ortamdaki ayarlar kullanılıyor (MTL_TABAN=$MTL_TABAN MTL_T3_SURUM=$MTL_T3_SURUM TAM_INCE_AYAR=$TAM_INCE_AYAR)."
+        return 0
+    fi
+    local k v fark=""
+    while IFS='=' read -r k v; do
+        case "$k" in
+            MTL_TABAN) [ "$v" = "$MTL_TABAN" ] || fark="$fark MTL_TABAN=$v" ;;
+            MTL_T3_SURUM) [ "$v" = "$MTL_T3_SURUM" ] || fark="$fark MTL_T3_SURUM=$v" ;;
+            TAM_INCE_AYAR) [ "$v" = "$TAM_INCE_AYAR" ] || fark="$fark TAM_INCE_AYAR=$v" ;;
+        esac
+    done < "$TABAN_KAYDI"
+    [ -z "$fark" ] || hata "Eğitim farklı bir tabanla yapılmış ($TABAN_KAYDI:$fark); şimdiki ortam MTL_TABAN=$MTL_TABAN" \
+        "MTL_T3_SURUM=$MTL_T3_SURUM TAM_INCE_AYAR=$TAM_INCE_AYAR. Birleştirme eğitimdeki tabanla yapılmalı:" \
+        "ADIM=birlestir$fark bash finetune/egit.sh"
+    bilgi "Eğitim tabanı doğrulandı: $TABAN_KIMLIK (MTL_T3_SURUM=$MTL_T3_SURUM)."
 }
 
 oom_onerisi() {
@@ -458,14 +536,17 @@ adim_egit() {
     baslik "2/3 Eğitim: ön işleme + train.py"
     [ -x "$PY" ] || hata "Sanal ortam yok: $VENV — önce: ADIM=kur bash finetune/egit.sh"
     veri_denetle
-    local on_isleme
-    on_isleme="$(on_isleme_karari)"
+    local on_isleme beklenen
+    beklenen="$TABAN_KIMLIK $(veri_ozeti)"
+    on_isleme="$(on_isleme_karari "$beklenen")"
     if [ "$on_isleme" = "1" ]; then
         bilgi "Ön işleme açık: konuşmacı gömmesi, ses ve metin belirteçleri yeniden çıkarılacak ($TABAN_KIMLIK)."
+        on_isleme_temizle
     else
-        bilgi "Ön işleme atlanıyor: $ON_ISLEME_DIZIN güncel ($TABAN_KIMLIK). Zorlamak için ON_ISLEME=1."
+        bilgi "Ön işleme atlanıyor: $ON_ISLEME_DIZIN güncel ($TABAN_KIMLIK, metadata.csv değişmemiş). Zorlamak için ON_ISLEME=1."
     fi
     yamala "$on_isleme"
+    rm -f "$TABAN_KAYDI"          # yarıda kalan eğitimin bağdaştırıcısı eski kayıtla birleştirilmesin
     cihaz_bul
     mkdir -p "$GUNLUK_DIZIN"
     local gunluk durum
@@ -479,7 +560,7 @@ adim_egit() {
     set -e
     if [ "$on_isleme" = "1" ] && grep -q "Preprocessing completed" "$gunluk" 2>/dev/null; then
         mkdir -p "$ON_ISLEME_DIZIN"
-        printf '%s' "$TABAN_KIMLIK" > "$ON_ISLEME_ISARET"
+        printf '%s' "$beklenen" > "$ON_ISLEME_ISARET"
         grep "Preprocessing completed" "$gunluk" | tail -n 1 | sed 's/^/[egit] ön işleme: /'
     fi
     if [ "$durum" -ne 0 ]; then
@@ -488,7 +569,8 @@ adim_egit() {
         fi
         hata "train.py başarısız oldu (çıkış kodu $durum). Günlük: $gunluk"
     fi
-    bilgi "Eğitim tamam."
+    taban_kaydet
+    bilgi "Eğitim tamam. Taban kaydı: $TABAN_KAYDI ($TABAN_KIMLIK)."
 }
 
 # ---------- ADIM: birlestir ----------
@@ -508,6 +590,7 @@ adim_birlestir() {
     baslik "3/3 Birleştirme ve sonuç"
     [ -x "$PY" ] || hata "Sanal ortam yok: $VENV — önce: ADIM=kur bash finetune/egit.sh"
     [ -f "$VERI/metadata.csv" ] && grep -q '|\[' "$VERI/metadata.csv" && ETIKETLI=1
+    taban_dogrula
     if [ "$TAM_INCE_AYAR" = "1" ]; then
         bilgi "Tam ince ayar: birleştirme gerekmez."
     else

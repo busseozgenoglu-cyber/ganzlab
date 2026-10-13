@@ -32,8 +32,11 @@ referans için ``ref_audio`` → ``audio_prompt_path`` → ``speaker_wav``, dil 
 ``language_id``; ilk bulunan açık parametre kullanılır. Hiçbiri açık değilse ve imza ``**kwargs`` alıyorsa mlx-audio'nun
 standart adları (``ref_audio``, ``lang_code``) gönderilir. İmzada olmayan ad asla gönderilmez.
 
-Sınırlar: ``T3_FINETUNED`` (PyTorch ince ayar ağırlıkları) bu arka uca uygulanmaz — uyarı loglanır. ``T3_EMOTION_TAGS``
-açıkken ``[duygu] `` öneki PyTorch arka ucuyla aynı kuralla eklenir.
+Sınırlar: ``T3_FINETUNED`` (PyTorch ince ayar ağırlıkları) bu arka uca uygulanmaz — uyarı loglanır. ``[duygu] ``
+öneki yalnızca ``T3_EMOTION_TAGS`` açık VE ``MLX_MODEL`` varsayılan temel model DEĞİLKEN (kullanıcı ince ayarlı ağırlıkları
+MLX'e dönüştürüp gösterdiyse) eklenir; temel model etiketi görmediği için "[mutlu]" sözünü metin gibi okuyabilir — bu
+durumda etiketler atlanır ve bir kez uyarı loglanır. Etiket alacak duygular ``T3_EMOTION_SET`` (virgüllü; boşsa ince
+ayar bankasındaki 19 duygu) ile süzülür — PyTorch arka ucuyla aynı kural.
 
 Sözleşme: ``docs/SOZLESME3.md`` §2.
 """
@@ -41,6 +44,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import unicodedata
 from typing import Any
 
 import numpy as np
@@ -52,9 +56,40 @@ from . import BackendUnavailable, BaseBackend
 log = logging.getLogger("sesklon.backends.chatterbox_mlx")
 
 VARSAYILAN_SR = 24000
+# Temel (ince ayarsız) MLX modeli: duygu etiketlerini eğitimde görmedi → önek eklenmez
+VARSAYILAN_MLX_MODEL = "mlx-community/chatterbox-multilingual-v3"
+# İnce ayar cümle bankasındaki (finetune/cumleler/*.txt) etiketli duygular; T3_EMOTION_SET boşsa bunlar geçerli.
+# (chatterbox.py'deki DEFAULT_EMOTION_SET ile aynı; modüller birbirini import etmesin diye bilerek tekrar edildi.)
+VARSAYILAN_DUYGU_KUMESI: tuple[str, ...] = (
+    "mutlu", "heyecanlı", "üzgün", "kızgın", "şaşkın", "korkmuş", "sakin", "ciddi", "samimi",
+    "fısıltı", "alaycı", "nazik", "gergin", "umutlu", "otoriter", "romantik", "nostaljik", "gururlu", "sıkılmış",
+)
 # İç ``generate``'in sürüme göre değişebilen parametre adları (öncelik sırasıyla; ilki mlx-audio'nun gerçek adı)
 REF_ADAYLARI = ("ref_audio", "audio_prompt_path", "speaker_wav")
 DIL_ADAYLARI = ("lang_code", "language", "language_id")
+
+
+def _duygu_norm(ad: Any) -> str:
+    """Duygu adını karşılaştırmaya hazırlar: NFC + Türkçe küçük harf + kırpma."""
+    return unicodedata.normalize("NFC", tr_lower(unicodedata.normalize("NFC", str(ad)))).strip()
+
+
+def duygu_kumesi() -> frozenset[str]:
+    """Etiket alacak duygular: ``T3_EMOTION_SET`` (virgüllü; config'te yoksa boş sayılır) ya da boşsa bankadaki 19 duygu."""
+    ham = str(getattr(config, "T3_EMOTION_SET", "") or "")
+    ogeler = [_duygu_norm(x) for x in ham.split(",")] if ham.strip() else list(VARSAYILAN_DUYGU_KUMESI)
+    return frozenset(x for x in ogeler if x and x != "normal")
+
+
+def varsayilan_model_mi(model: str | None = None) -> bool:
+    """``MLX_MODEL`` temel (ince ayarsız) mlx-community modeli mi? (büyük/küçük harf ve sondaki / önemsiz)"""
+    ad = config.MLX_MODEL if model is None else model
+    return tr_lower(str(ad or "").strip().rstrip("/")) == VARSAYILAN_MLX_MODEL
+
+
+def etiketler_etkin() -> bool:
+    """Duygu öneki gerçekten eklenecek mi: ``T3_EMOTION_TAGS`` açık VE ``MLX_MODEL`` varsayılan model değil."""
+    return bool(config.T3_EMOTION_TAGS) and not varsayilan_model_mi()
 
 
 def _imza(fn: Any) -> tuple[set[str], bool]:
@@ -125,10 +160,12 @@ class ChatterboxMlxBackend(BaseBackend):
 
         self.mlx_model: str = config.MLX_MODEL
         self.model_id = self.mlx_model
+        self._etiket_uyarisi_verildi = False
         if config.T3_FINETUNED:
             log.warning("T3_FINETUNED (%s) MLX arka ucuna uygulanmaz; ince ayarlı model için 'chatterbox' (PyTorch) "
                         "arka ucunu kullanın ya da ağırlıkları MLX'e dönüştürüp MLX_MODEL ile gösterin.",
                         config.T3_FINETUNED)
+        self._etiket_uyarisi()
         log.info("Chatterbox Multilingual (MLX) yükleniyor: %s", self.mlx_model)
         try:
             self._model = load_model(self.mlx_model)
@@ -170,16 +207,33 @@ class ChatterboxMlxBackend(BaseBackend):
         if callable(tohumla):
             tohumla(int(seed))
 
-    @staticmethod
-    def tag_text(text: str, emotion: str | None) -> str:
-        """``T3_EMOTION_TAGS`` açıkken ``"[mutlu] Merhaba"`` biçiminde duygu öneki (PyTorch arka ucuyla aynı kural).
+    def _etiket_uyarisi(self) -> None:
+        """``T3_EMOTION_TAGS`` açık ama model temel modelse bir kez uyarır (etiketler atlanır)."""
+        if self._etiket_uyarisi_verildi or not config.T3_EMOTION_TAGS or not varsayilan_model_mi():
+            return
+        self._etiket_uyarisi_verildi = True
+        ek = (f" T3_FINETUNED ({config.T3_FINETUNED}) MLX'e uygulanmadığı için model ince ayarsız."
+              if config.T3_FINETUNED else "")
+        log.warning("T3_EMOTION_TAGS açık ama MLX_MODEL temel model (%s); duygu etiketleri atlanıyor — temel model "
+                    "'[mutlu]' gibi önekleri metin olarak okuyabilir.%s Etiket için ince ayarlı ağırlıkları MLX'e "
+                    "dönüştürüp MLX_MODEL ile gösterin.", config.MLX_MODEL, ek)
 
-        ``normal`` ve boş duygu etiket almaz; metin zaten bu etiketle başlıyorsa ikinci kez eklenmez.
+    def tag_text(self, text: str, emotion: str | None) -> str:
+        """Etiketler etkinken ``"[mutlu] Merhaba"`` biçiminde duygu öneki (PyTorch arka ucuyla aynı kural).
+
+        Etkinlik: ``T3_EMOTION_TAGS`` açık VE ``MLX_MODEL`` varsayılan model değil. ``normal``, boş ve
+        ``T3_EMOTION_SET`` kümesinde olmayan duygu etiket almaz; metin zaten bu etiketle başlıyorsa ikinci kez eklenmez.
         """
         if not config.T3_EMOTION_TAGS or not emotion:
             return text
-        tag = tr_lower(str(emotion)).strip()
+        if not etiketler_etkin():
+            self._etiket_uyarisi()
+            return text
+        tag = _duygu_norm(emotion)
         if not tag or tag == "normal":
+            return text
+        if tag not in duygu_kumesi():
+            log.debug("Duygu etiketi eklenmedi: '%s' ince ayar duygu kümesinde yok (T3_EMOTION_SET)", tag)
             return text
         if text.lstrip().startswith(f"[{tag}]"):
             return text
@@ -244,8 +298,11 @@ class ChatterboxMlxBackend(BaseBackend):
 
     def info(self) -> dict[str, Any]:
         d = super().info()
-        d.update({"mlx_model": config.MLX_MODEL, "emotion_tags": bool(config.T3_EMOTION_TAGS)})
+        etkin = etiketler_etkin()
+        d.update({"mlx_model": config.MLX_MODEL, "emotion_tags": etkin,
+                  "emotion_set": sorted(duygu_kumesi()) if etkin else []})
         return d
 
 
-__all__ = ["ChatterboxMlxBackend", "REF_ADAYLARI", "DIL_ADAYLARI"]
+__all__ = ["ChatterboxMlxBackend", "REF_ADAYLARI", "DIL_ADAYLARI", "VARSAYILAN_MLX_MODEL", "VARSAYILAN_DUYGU_KUMESI",
+           "duygu_kumesi", "etiketler_etkin", "varsayilan_model_mi"]

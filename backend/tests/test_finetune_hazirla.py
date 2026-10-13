@@ -299,15 +299,63 @@ def test_boleme_transkriptsiz_uzun_kaydi_parcalar(kume, tmp_path):
     kay.mkdir()
     shutil.copy(kume["kayitlar"] / "sakin_0001.wav", kay / "sakin_0001.wav")
     man = _manifest(tmp_path / "manifest.csv", [("sakin_0001", "sakin", "normal", "Uzun metin.")])
-    r = hazirla.prepare(kay, man, tmp_path / "out", etiket=True, boleme=True, transkriptsiz=True)
-    satirlar = _metadata(tmp_path / "out" / "metadata.csv")
-    assert len(satirlar) >= 2
-    for kid, raw, norm in satirlar:
+    r = hazirla.prepare(kay, man, tmp_path / "out", etiket=True, dogrulama=0.5, boleme=True, transkriptsiz=True)
+    # metinsiz parçalar metadata.csv'ye girmez (pandas boş alanı NaN → "nan" metni okurdu)
+    assert (tmp_path / "out" / "metadata.csv").read_text(encoding="utf-8") == ""
+    assert not (tmp_path / "out" / "metadata_val.csv").exists()
+    ham = (tmp_path / "out" / "metadata_transkriptsiz.csv").read_text(encoding="utf-8").splitlines()
+    assert len(ham) >= 2
+    for satir in ham:
+        kid, raw, norm = satir.split("|")
+        assert satir.endswith("||") and raw == "" and norm == ""
         assert kid.startswith("sakin_0001_")
-        assert raw == "" and norm == ""
         sure = sf.info(str(tmp_path / "out" / "wavs" / f"{kid}.wav")).duration
         assert 2.5 <= sure <= 10.1
-    assert any("ASR" in u for u in r["uyarilar"])
+    assert r["transkriptsiz_adet"] == len(ham) and r["egitim_adet"] == 0 and r["dogrulama_adet"] == 0
+    assert any("Whisper" in u and "metadata.csv'ye ekleyin" in u for u in r["uyarilar"])
+    assert "metadata_transkriptsiz.csv" in hazirla.ozet_metni(r, tmp_path / "out")
+
+
+def test_transkriptsiz_txtsiz_kayit_ayri_dosyaya_metinli_metadataya(kume, tmp_path):
+    kay = tmp_path / "kayitlar"
+    kay.mkdir()
+    shutil.copy(kume["kayitlar"] / "normal_0001.wav", kay / "metinli.wav")
+    (kay / "metinli.txt").write_text("Bugün hava güzel.", encoding="utf-8")
+    shutil.copy(kume["kayitlar"] / "mutlu_0002.flac", kay / "metinsiz.flac")
+    r = hazirla.prepare(kay, None, tmp_path / "out", transkriptsiz=True)
+    assert _metadata(tmp_path / "out" / "metadata.csv") == [["metinli", "Bugün hava güzel.", "Bugün hava güzel."]]
+    assert (tmp_path / "out" / "metadata_transkriptsiz.csv").read_text(encoding="utf-8") == "metinsiz||\n"
+    for satir in (tmp_path / "out" / "metadata.csv").read_text(encoding="utf-8").splitlines():
+        assert all(alan.strip() for alan in satir.split("|"))          # boş alan yok
+    assert {k["id"]: k["bolum"] for k in r["kabul_edilenler"]} == {"metinli": "egitim", "metinsiz": "transkriptsiz"}
+
+
+def test_pandas_tuzagi_adlar():
+    for ad in ("0001", "12", "1.5", "1e5", "-3", "+7", "nan", "NULL", "None", "True", "inf"):
+        assert hazirla.pandas_tuzagi_mi(ad), ad
+    for ad in ("mutlu_0001", "kayit", "e", "a1", "üzgün_0012", "1_000"):
+        assert not hazirla.pandas_tuzagi_mi(ad), ad
+
+
+def test_sayisal_kayit_adlari_kayit_oneki_alir(kume, tmp_path):
+    kay = tmp_path / "kayitlar"
+    kay.mkdir()
+    for ad in ("0001", "kayit_0001", "1.5"):
+        shutil.copy(kume["kayitlar"] / "normal_0001.wav", kay / f"{ad}.wav")
+        (kay / f"{ad}.txt").write_text("Bugün hava güzel.", encoding="utf-8")
+    shutil.copy(kume["kayitlar"] / "korkmuş_0001.wav", kay / "0002.wav")        # çok kısa → red
+    (kay / "0002.txt").write_text("Kısa.", encoding="utf-8")
+    r = hazirla.prepare(kay, None, tmp_path / "out")
+    idler = {s[0] for s in _metadata(tmp_path / "out" / "metadata.csv")}
+    assert idler == {"kayit_0001", "kayit_0001_2", "kayit_1.5"}               # gerçek kayit_0001 ile çakışmaz
+    assert r["id_eslemesi"] == {"0001": "kayit_0001_2", "0002": "kayit_0002", "1.5": "kayit_1.5"}
+    assert (tmp_path / "out" / "wavs" / "kayit_0001_2.wav").exists()
+    assert not (tmp_path / "out" / "wavs" / "0001.wav").exists()
+    assert {x["id"]: x["neden"] for x in r["red"]} == {"0002": "çok kısa"}     # red listesinde kullanıcının adı
+    assert any("kayit_" in u and "pandas" in u for u in r["uyarilar"])
+    pd = pytest.importorskip("pandas")
+    tablo = pd.read_csv(tmp_path / "out" / "metadata.csv", sep="|", header=None, quoting=3)
+    assert all(isinstance(v, str) for v in tablo[0])
 
 
 def test_main_donus_kodlari(kume, tmp_path, capsys):

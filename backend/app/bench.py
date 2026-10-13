@@ -25,7 +25,9 @@ Modül API'si::
 
 Ölçüm notları:
 
-* Ham mod: ``model.generate`` doğrudan çağrılır (imzaya göre süzülmüş parametrelerle), çıktı baş/son sessizlikten
+* Ham mod: metin önce motorla aynı biçimde normalize edilir (``app.textnorm.normalize``; ``--ham-metin`` kapatır,
+  duygu etiketi normalizasyondan sonra eklenir), sonra
+  ``model.generate`` doğrudan çağrılır (imzaya göre süzülmüş parametrelerle), çıktı baş/son sessizlikten
   kırpılır (``audio.trim_silence``, −45 dB, 40 ms pay — motorla aynı), sonra ölçülür. ``gen_s`` yalnızca
   ``generate`` süresidir; ``rtf = gen_s / duration_s`` (1'in altı gerçek zamandan hızlı).
 * Boru hattı modu (``--pipeline``): ``Engine.synthesize`` (normalizasyon, prozodi, QC'li yeniden üretim, birleştirme,
@@ -177,9 +179,21 @@ def emotion_label(category: str) -> str | None:
     return c if c in EMOTION_CATEGORIES else None
 
 
-def tagged_text(sentence: dict, emotion_tags: bool) -> str:
-    """Modele gidecek metin: ``--emotion-tags`` açıksa duygu kategorilerinde ``"[mutlu] "`` öneki."""
-    text = sentence["text"]
+def normalized_text(text: str, language: str = "tr") -> str:
+    """Motorla aynı metin normalizasyonu (``app.textnorm.normalize``): "14:30" → "on dört otuz", "%12" → "yüzde on
+    iki". İnce ayar verisi de normalize edilmiş metinle eğitildiği için ham mod varsayılan olarak normalize eder."""
+    from .textnorm import normalize
+
+    out = normalize(text, language)
+    return out if out.strip() else text
+
+
+def tagged_text(sentence: dict, emotion_tags: bool, text: str | None = None) -> str:
+    """Modele gidecek metin: ``--emotion-tags`` açıksa duygu kategorilerinde ``"[mutlu] "`` öneki.
+
+    ``text`` verilirse (örn. normalize edilmiş metin) cümlenin kendisi yerine o kullanılır; önek her zaman
+    normalizasyondan SONRA eklenir (normalizasyon köşeli etiketleri siler)."""
+    text = sentence["text"] if text is None else text
     label = emotion_label(sentence.get("category", ""))
     if emotion_tags and label:
         return f"[{label}] {text}"
@@ -316,6 +330,25 @@ def _settings(settings: dict | None, **extra: Any) -> dict:
     return s
 
 
+def _load_error_message(name: str, e: BaseException) -> str:
+    """Arka uç yüklenirken çıkan ImportError / OSError / RuntimeError için Türkçe mesaj (+ kurulum ipucu)."""
+    hint = ""
+    try:
+        from . import backends
+
+        hint = backends.get_class(name).install_hint or ""
+    except Exception:  # noqa: BLE001 - ipucu yoksa mesaj yine anlaşılır
+        hint = ""
+    if isinstance(e, ImportError):
+        what = "paket kurulu görünüyor ama içe aktarılamadı (sürüm uyuşmazlığı ya da eksik bağımlılık olabilir)"
+    elif isinstance(e, OSError):
+        what = "model dosyaları ya da sistem kitaplığı okunamadı"
+    else:
+        what = "model yüklenemedi"
+    msg = f"'{name}' arka ucu yüklenemedi: {what}. Ayrıntı: {type(e).__name__}: {e}"
+    return f"{msg}. Kurulum: {hint}" if hint else msg
+
+
 def _model_info(model: Any, backend_name: str) -> dict:
     try:
         info = dict(model.info())
@@ -327,8 +360,11 @@ def _model_info(model: Any, backend_name: str) -> dict:
 def run_bench(backend_name: str, sentences: list[dict], *, ref: str | Path | None = None,
               settings: dict | None = None, pipeline: bool = False, repeat: int = 1, device: str | None = "cpu",
               emotion_tags: bool = False, progress: Callable[[int, int, str], None] | None = None,
-              model: Any = None, language: str = "tr", style: str | None = None) -> dict:
-    """Cümle setini üretip ölçer; sonuç şeması ``docs/SOZLESME3.md`` §3. ``model`` verilirse yeniden yüklenmez."""
+              model: Any = None, language: str = "tr", style: str | None = None, normalize: bool = True) -> dict:
+    """Cümle setini üretip ölçer; sonuç şeması ``docs/SOZLESME3.md`` §3. ``model`` verilirse yeniden yüklenmez.
+
+    ``normalize`` (yalnızca ham mod): metin modele gitmeden ``app.textnorm.normalize`` ile normalize edilir
+    (motor da böyle yapar). Boru hattı modunda normalizasyonu motor yapar; bu bayrak etkisizdir."""
     from . import backends
     from .audio import trim_silence
 
@@ -342,18 +378,23 @@ def run_bench(backend_name: str, sentences: list[dict], *, ref: str | Path | Non
 
     t_load = time.perf_counter()
     eng = None
-    if pipeline:
-        from .engine import Engine
+    try:
+        if pipeline:
+            from .engine import Engine
 
-        eng = Engine(backend=name)
-        if device:
-            eng.device = device
-        if model is not None:
-            eng._tts = model
-            eng.model_name = getattr(model, "model_id", "") or eng.model_name
-        model = eng.tts()
-    elif model is None:
-        model = backends.create(name, device=device or "cpu")
+            eng = Engine(backend=name)
+            if device:
+                eng.device = device
+            if model is not None:
+                eng._tts = model
+                eng.model_name = getattr(model, "model_id", "") or eng.model_name
+            model = eng.tts()
+        elif model is None:
+            model = backends.create(name, device=device or "cpu")
+    except backends.BackendUnavailable:
+        raise                                   # mesajı zaten Türkçe ve kurulum ipuçlu
+    except (ImportError, OSError, RuntimeError) as e:
+        raise BenchError(_load_error_message(name, e)) from e
     load_s = time.perf_counter() - t_load
 
     s = _settings(settings)
@@ -365,8 +406,15 @@ def run_bench(backend_name: str, sentences: list[dict], *, ref: str | Path | Non
 
     results: list[dict] = []
     n = len(sentences)
+    use_norm = bool(normalize) and not pipeline
     for i, sent in enumerate(sentences):
-        text_in = tagged_text(sent, emotion_tags)
+        norm = None
+        if use_norm:
+            try:
+                norm = normalized_text(sent["text"], language)
+            except Exception as e:  # noqa: BLE001 - normalizasyon hatası cümleyi ham metinle ölçtürsün
+                log.warning("Cümle normalize edilemedi (%s), ham metin kullanılıyor: %s", sent.get("id"), e)
+        text_in = tagged_text(sent, emotion_tags, norm)
         label = emotion_label(sent.get("category", ""))
         if progress:
             try:
@@ -374,6 +422,7 @@ def run_bench(backend_name: str, sentences: list[dict], *, ref: str | Path | Non
             except Exception:  # noqa: BLE001 - ilerleme bildirimi kıyaslamayı düşürmesin
                 pass
         row = {"id": sent.get("id") or f"n{i + 1:02d}", "category": sent.get("category", ""), "text": sent["text"],
+               "normalized_text": norm if norm is not None else (None if pipeline else sent["text"]),
                "input_text": text_in}
         runs: list[dict] = []
         try:
@@ -382,19 +431,23 @@ def run_bench(backend_name: str, sentences: list[dict], *, ref: str | Path | Non
                 if pipeline:
                     runs.append(_run_pipeline(eng, text_in, sent["text"], language, ref, s, sd, style, trim_silence))
                 else:
-                    runs.append(_run_raw(model, text_in, sent["text"], language, ref, s, sd, label, trim_silence))
+                    runs.append(_run_raw(model, text_in, norm or sent["text"], language, ref, s, sd, label,
+                                         trim_silence))
         except Exception as e:  # noqa: BLE001 - tek cümlenin hatası tüm kıyaslamayı düşürmesin
             log.warning("Cümle %s üretilemedi: %s", row["id"], e)
             row["error"] = f"{type(e).__name__}: {e}"
             results.append(row)
             continue
         row.update(_aggregate(runs))
+        if pipeline and row.get("pipeline", {}).get("normalized_text"):
+            row["normalized_text"] = row["pipeline"]["normalized_text"]
         results.append(row)
 
     settings_out = {"backend": name, "ref": str(ref) if ref else None, "exaggeration": s["exaggeration"],
                     "cfg_weight": s["cfg_weight"], "temperature": s["temperature"], "seed": seed,
                     "pipeline": bool(pipeline), "repeat": repeat, "emotion_tags": bool(emotion_tags),
-                    "language": language, "device": getattr(eng, "device", None) or device, "style": style}
+                    "language": language, "device": getattr(eng, "device", None) or device, "style": style,
+                    "normalize": True if pipeline else bool(normalize)}
     return {"version": VERSION, "created": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
             "backend": info, "settings": settings_out, "sentences": results, "summary": summarize(results)}
 
@@ -429,7 +482,7 @@ def _run_pipeline(eng: Any, text_in: str, text: str, language: str, ref, s: dict
     wav = trim_silence(np.asarray(wav, dtype=np.float32), int(sr), threshold_db=-45.0, pad_ms=40)
     qc_reports = [r for r in (rep.get("qc") or []) if isinstance(r, dict)]
     worst = min(qc_reports, key=lambda r: r.get("score", 0)) if qc_reports else None
-    m = measure(wav, int(sr), text, gen_s, qc_report=worst)
+    m = measure(wav, int(sr), rep.get("normalized_text") or text, gen_s, qc_report=worst)
     m["pipeline"] = {"chunks": len(rep.get("chunks") or []),
                      "qc_retries": int(sum(int(r.get("retries") or 0) for r in qc_reports)),
                      "normalized_text": rep.get("normalized_text", "")}
@@ -522,12 +575,16 @@ def _better(key_dir: int, tol: float, a: float | None, b: float | None) -> str:
 def compare(a: dict, b: dict) -> dict:
     """İki ``run_bench`` sonucunun farkı: özet satırları (b − a), cümle bazında aralık farkı ve kazanan.
 
-    Kazanan oylarla belirlenir: tonlama aralığı medyanı (büyük iyi), perde sapması medyanı (büyük iyi),
-    QC başarısız sayısı (küçük iyi), RTF ort. (küçük iyi). Ölçüm gürültüsü oy vermesin diye küçük farklar
-    (aralık 0,5 st, sapma 0,2 st, RTF 0,05) yok sayılır. Oylar eşitse "berabere".
+    Kazanan oylarla belirlenir: hatalı cümle sayısı (küçük iyi), tonlama aralığı medyanı (büyük iyi), perde
+    sapması medyanı (büyük iyi), QC başarısız sayısı (küçük iyi), RTF ort. (küçük iyi). Ölçüm gürültüsü oy
+    vermesin diye küçük farklar (aralık 0,5 st, sapma 0,2 st, RTF 0,05) yok sayılır. Oylar eşitse "berabere".
+    Daha çok cümlesi hata veren taraf oylar ne derse desin kazanan olamaz (ölçülemeyen cümleler ortalamaları
+    anlamsızlaştırır); o durumda diğer taraf kazanır ve ``note`` nedenini söyler.
     """
     sa, sb = a.get("summary") or {}, b.get("summary") or {}
-    rows = []
+    ea, eb = _error_count(a), _error_count(b)
+    rows = [{"metric": "errors", "label": "Hatalı cümle", "a": ea, "b": eb, "delta": eb - ea,
+             "better": _better(-1, 0.0, ea, eb)}]
     for key, label, direction, tol in _COMPARE_ROWS:
         va, vb = sa.get(key), sb.get(key)
         delta = _round(vb - va, 3) if isinstance(va, (int, float)) and isinstance(vb, (int, float)) else None
@@ -538,7 +595,17 @@ def compare(a: dict, b: dict) -> dict:
         w = _better(direction, tol, sa.get(key), sb.get(key))
         if w in votes:
             votes[w] += 1
+    # hata oyu: daha çok cümlesi hata veren taraf bu oyu kaybeder
+    w_err = _better(-1, 0.0, ea, eb)
+    if w_err in votes:
+        votes[w_err] += 1
     winner = "a" if votes["a"] > votes["b"] else ("b" if votes["b"] > votes["a"] else "berabere")
+    note = None
+    # daha çok hata veren taraf hiçbir zaman kazanamaz: ölçülemeyen cümleler ortalamaları anlamsızlaştırır
+    if eb > ea and winner != "a":
+        winner, note = "a", f"B'de {eb - ea} cümle daha fazla hata verdi; B kazanan sayılamaz."
+    elif ea > eb and winner != "b":
+        winner, note = "b", f"A'da {ea - eb} cümle daha fazla hata verdi; A kazanan sayılamaz."
 
     by_id_b = {s.get("id"): s for s in b.get("sentences") or [] if "error" not in s}
     sents = []
@@ -549,8 +616,19 @@ def compare(a: dict, b: dict) -> dict:
         ra, rb = (s.get("f0") or {}).get("range_semitones"), (t.get("f0") or {}).get("range_semitones")
         sents.append({"id": s.get("id"), "text": s.get("text", ""), "range_a": ra, "range_b": rb,
                       "delta": _round(rb - ra, 2) if ra is not None and rb is not None else None})
-    return {"summary": rows, "sentences": sents, "winner": winner, "votes": votes,
+    return {"summary": rows, "sentences": sents, "winner": winner, "votes": votes, "note": note,
             "labels": {"a": _label(a), "b": _label(b)}}
+
+
+def _error_count(result: dict) -> int:
+    """Hata veren cümle sayısı: cümle satırlarından (yoksa özetteki ``errors`` alanından)."""
+    sents = result.get("sentences")
+    if isinstance(sents, list) and sents:
+        return sum(1 for s in sents if isinstance(s, dict) and "error" in s)
+    try:
+        return int((result.get("summary") or {}).get("errors") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _label(result: dict) -> str:
@@ -676,7 +754,7 @@ def format_compare(cmp: dict) -> str:
     head = _row([c for c, _, _ in cols], cols)
     lines += [head, "─" * len(head)]
     for row in cmp.get("summary") or []:
-        nd = 0 if row["metric"] == "qc_fail_count" else 2
+        nd = 0 if row["metric"] in ("qc_fail_count", "errors") else 2
         better = {"a": "A", "b": "B"}.get(row["better"], "-")
         vals = (row.get("label", row["metric"]), _num_tr(row["a"], nd), _num_tr(row["b"], nd),
                 _num_tr(row["delta"], nd), better)
@@ -693,8 +771,10 @@ def format_compare(cmp: dict) -> str:
     votes = cmp.get("votes") or {}
     w = cmp.get("winner")
     text = {"a": "A", "b": "B"}.get(w, "berabere")
-    lines += ["", f"Kazanan: {text} (oylar — A: {votes.get('a', 0)}, B: {votes.get('b', 0)}; ölçütler: aralık "
-                  "medyanı, perde sapması, QC başarısız, RTF)"]
+    lines += ["", f"Kazanan: {text} (oylar — A: {votes.get('a', 0)}, B: {votes.get('b', 0)}; ölçütler: hatalı "
+                  "cümle, aralık medyanı, perde sapması, QC başarısız, RTF)"]
+    if cmp.get("note"):
+        lines.append(f"Not: {cmp['note']}")
     return "\n".join(lines)
 
 
@@ -765,6 +845,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--cfg-weight", type=float, default=DEFAULT_SETTINGS["cfg_weight"])
     ap.add_argument("--temperature", type=float, default=DEFAULT_SETTINGS["temperature"])
     ap.add_argument("--seed", type=int, default=None, help="tohum (cümle başına tohum + sıra)")
+    ap.add_argument("--ham-metin", "--no-normalize", dest="ham_metin", action="store_true",
+                    help="ham modda metni normalize etmeden gönder (varsayılan: app.textnorm.normalize ile "
+                         "'14:30' → 'on dört otuz'; --pipeline'da normalizasyonu motor yapar)")
     ap.add_argument("--emotion-tags", action="store_true",
                     help="duygu kategorilerinde metnin başına '[duygu] ' etiketi ekle (ince ayarlı model için)")
     ap.add_argument("--pipeline", action="store_true", help="tüm motor zinciriyle (Engine.synthesize) üret")
@@ -831,6 +914,7 @@ def main(argv: list[str] | None = None) -> int:
             "exaggeration": args.exaggeration, "cfg_weight": args.cfg_weight, "temperature": args.temperature,
             "seed": args.seed}, pipeline=args.pipeline, repeat=args.repeat, device=device,
             emotion_tags=args.emotion_tags, progress=None if args.quiet else progress, language=args.language,
+            normalize=not args.ham_metin,
             style=args.style)
         if args.sentences:
             result["settings"]["sentences_file"] = str(args.sentences)
@@ -839,6 +923,9 @@ def main(argv: list[str] | None = None) -> int:
             _write_json(args.out, result)
             say(f"\nSonuç yazıldı: {args.out}")
         return 0
+    except ImportError as e:       # arka uç paketi var ama içe aktarılamıyor (run_bench dışından gelirse)
+        print(f"Hata: arka uç yüklenemedi — {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
     except (FileNotFoundError, ValueError, BenchError, RuntimeError, OSError) as e:
         print(f"Hata: {e}", file=sys.stderr)
         return 1

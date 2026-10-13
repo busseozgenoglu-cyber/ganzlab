@@ -385,3 +385,62 @@ def test_main_bos_banka_ve_bilinmeyen_duygu_1(tmp_path, banka):
     bos.mkdir()
     assert senaryo.main(["--cikti", str(tmp_path / "x"), "--banka", str(bos)]) == 1
     assert senaryo.main(["--cikti", str(tmp_path / "y"), "--banka", str(banka), "--duygular", "yok"]) == 1
+
+
+# ---------- Unicode NFD (macOS dosya adları) ----------
+
+def _nfd(s: str) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFD", s)
+
+
+@pytest.fixture
+def nfd_banka(tmp_path: Path) -> Path:
+    """macOS Finder/TextEdit gibi NFD adlarla ve NFD içerikle yazılmış banka."""
+    klasor = tmp_path / "nfd"
+    klasor.mkdir()
+    for ad, onek in (("üzgün", "Yaşlı adam"), ("şaşkın", "Öğretmen"), ("normal", "İstanbul'da biri")):
+        icerik = (f"# yönerge: {ad} oku.\n# örnek: Örnek.\n"
+                  + "\n".join(cumleler_uret(onek)) + "\n")
+        (klasor / f"{_nfd(ad)}.txt").write_text(_nfd(icerik), encoding="utf-8")
+    assert any(p.name != __import__("unicodedata").normalize("NFC", p.name) for p in klasor.iterdir())
+    return klasor
+
+
+def test_nfd_dosya_adi_nfc_duygu_adi_olur(nfd_banka):
+    b = senaryo.load_bank(nfd_banka)
+    assert set(b) == {"normal", "üzgün", "şaşkın"}                 # NFC anahtarlar
+    assert b["üzgün"]["yonerge"] == "üzgün oku."
+    assert b["normal"]["cumleler"][0].startswith("İstanbul'da")      # NFD "İ" tek karaktere döner
+    m = senaryo.build_manifest(b)
+    assert all(ID_RE.match(r["id"]) for r in m)
+    assert {r["id"] for r in m} >= {"üzgün_0001", "şaşkın_0030", "normal_0001"}
+    assert all(r["metin"] == __import__("unicodedata").normalize("NFC", r["metin"]) for r in m)
+
+
+def test_nfd_banka_duygular_suzme_ve_kontrol(nfd_banka, tmp_path, capsys):
+    cikti = tmp_path / "s"
+    # hem NFC hem NFD yazılmış argüman eşleşir
+    assert senaryo.main(["--cikti", str(cikti), "--banka", str(nfd_banka),
+                         "--duygular", "üzgün," + _nfd("şaşkın")]) == 0
+    hata = capsys.readouterr().err
+    assert "bankada olmayan" not in hata
+    with (cikti / "manifest.csv").open(encoding="utf-8", newline="") as f:
+        kayitlar = list(csv.DictReader(f, delimiter="|"))
+    assert {k["duygu"] for k in kayitlar} == {"üzgün", "şaşkın"}
+    assert kayitlar[0]["id"] == "üzgün_0001"
+    assert (cikti / "kayit_listesi.txt").read_text(encoding="utf-8").split()[0] == "üzgün_0001"
+
+    assert senaryo.main(["--kontrol", "--banka", str(nfd_banka)]) == 0
+    out = capsys.readouterr().out
+    assert "profillerde yok" not in out
+
+
+def test_nfd_metin_nfc_olarak_eklenir(banka, tmp_path):
+    kitap = tmp_path / "kitap.txt"
+    kitap.write_text(_nfd("İzmir'de güneşli bir sabah başlıyordu. Çocuklar bahçede oynuyordu.\n"), encoding="utf-8")
+    cikti = tmp_path / "s"
+    assert senaryo.main(["--cikti", str(cikti), "--banka", str(banka), "--metin", str(kitap)]) == 0
+    satir = (cikti / "manifest.csv").read_text(encoding="utf-8").splitlines()
+    assert "normal_0031|normal|normal|İzmir'de güneşli bir sabah başlıyordu." in satir
+    assert senaryo.split_sentences(_nfd("İyi günler dilerim size.")) == ["İyi günler dilerim size."]

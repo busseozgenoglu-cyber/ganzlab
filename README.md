@@ -309,6 +309,7 @@ Docker'da `/data/pronunciations.json`) da çalışmaya devam eder.
 | `TTS_BACKEND` | `chatterbox` | Sentez arka ucu: `chatterbox` (PyTorch), `chatterbox-mlx` (Apple Silicon, `pip install mlx-audio`), `f5-tr`, `xtts` (ikisi yalnızca A/B kıyas için, ticari değil) |
 | `T3_FINETUNED` | boş | İnce ayarlı T3 ağırlıkları (`.safetensors`); bkz. [finetune/README.md](finetune/README.md) |
 | `T3_EMOTION_TAGS` | `0` | `1`: ince ayar verisi `[duygu]` etiketliyse metnin başına aynı etiketi ekle |
+| `T3_EMOTION_SET` | boş | Etiket alacak duygular (virgüllü; boşsa ince ayar bankasındaki 19 duygu). Bir alt kümeyle eğittiyseniz aynı listeyi verin |
 | `CHATTERBOX_LOCAL_DIR` | boş | Chatterbox ağırlıklarını indirmek yerine bu klasörden yükle |
 | `MLX_MODEL` | `mlx-community/chatterbox-multilingual-v3` | `chatterbox-mlx` arka ucunun modeli |
 | `F5_TR_CKPT`, `F5_TR_VOCAB` | boş | `f5-tr` arka ucu: marduk-ra/F5-TTS-Turkish ağırlığı ve `vocab.txt` (`F5_TR_MODEL`, `F5_TR_NFE` isteğe bağlı) |

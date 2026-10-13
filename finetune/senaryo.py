@@ -30,6 +30,7 @@ import argparse
 import math
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
@@ -69,9 +70,21 @@ _SOZCUK_RE = re.compile(r"\w")
 _ETIKET_RE = re.compile(r"\[[^\]]{1,60}\]")
 
 
+def _nfc(s: str) -> str:
+    """Unicode NFC biçimi. macOS (Finder/TextEdit) dosya adlarını ve bazen metni NFD yazar: "ü" = "u" + birleşik
+    iki nokta. NFC'ye çevrilmezse "üzgün" eşleşmez, id'ler bozulur ("u_zgu_n_0001"). tr_lower'dan ÖNCE çağrılır
+    (NFD "İ" = "I" + birleşik nokta, tr_lower ile "ı" + nokta olurdu)."""
+    return unicodedata.normalize("NFC", s)
+
+
+def _duygu_adi(s: str) -> str:
+    """Dosya adı ya da kullanıcı girdisinden duygu anahtarı: NFC → Türkçe küçük harf → baş/son boşluksuz."""
+    return tr_lower(_nfc(s)).strip()
+
+
 def _fold(s: str) -> str:
     """Türkçe küçük harf + ASCII indirgeme ("Üzgün" → "uzgun"); yedek eşleşme için."""
-    return tr_lower(s).translate(_FOLD)
+    return tr_lower(_nfc(s)).translate(_FOLD)
 
 
 def _sozcuk_sayisi(s: str) -> int:
@@ -95,8 +108,8 @@ def _dk(sn: float) -> str:
 
 
 def _temiz_metin(s: str) -> str:
-    """Manifest alanına girecek metin: tek satır, ayırıcı ``|`` içermez."""
-    return re.sub(r"\s+", " ", s.replace("|", "/")).strip()
+    """Manifest alanına girecek metin: NFC, tek satır, ayırıcı ``|`` içermez."""
+    return re.sub(r"\s+", " ", _nfc(s).replace("|", "/")).strip()
 
 
 # ---------- banka ----------
@@ -104,7 +117,7 @@ def _temiz_metin(s: str) -> str:
 def _dosya_oku(path: Path) -> dict:
     """Tek banka dosyasını okur → {"yonerge", "ornek", "cumleler"}. UTF-8 değilse ValueError (Türkçe mesaj)."""
     try:
-        ham = path.read_text(encoding="utf-8-sig")
+        ham = _nfc(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError as e:
         raise ValueError(f"{path.name}: dosya UTF-8 değil ({e.reason}, bayt {e.start})") from None
     yonerge, ornek, cumleler = "", "", []
@@ -139,7 +152,7 @@ def load_bank(dir: str | Path) -> dict[str, dict]:
     for path in sorted(klasor.glob("*.txt")):
         if path.name.startswith("."):
             continue
-        banka[tr_lower(path.stem).strip()] = _dosya_oku(path)
+        banka[_duygu_adi(path.stem)] = _dosya_oku(path)
     if "normal" in banka:
         banka = {"normal": banka.pop("normal"), **banka}
     return banka
@@ -169,7 +182,7 @@ def check_bank(dir: str | Path) -> list[str]:
         return [f"HATA: banka klasöründe .txt dosyası yok: {klasor}"]
     profiller = _profil_adlari()
     for path in dosyalar:
-        ad = path.name
+        ad = _nfc(path.name)
         try:
             d = _dosya_oku(path)
         except ValueError as e:
@@ -182,7 +195,7 @@ def check_bank(dir: str | Path) -> list[str]:
             sorunlar.append(f"HATA: {ad}: '# yönerge:' satırı yok")
         if not d["ornek"]:
             sorunlar.append(f"UYARI: {ad}: '# örnek:' satırı yok")
-        duygu = tr_lower(path.stem).strip()
+        duygu = _duygu_adi(path.stem)
         if profiller is not None and duygu not in profiller:
             sorunlar.append(f"UYARI: {ad}: '{duygu}' app.emotion profillerinde yok (etiket motor tarafından tanınmaz)")
         gorulen: dict[str, int] = {}
@@ -318,7 +331,7 @@ def split_sentences(text: str, *, min_words: int = MIN_SOZCUK, max_words: int = 
     * Paragraflar boş satırla ayrılır; noktalaması olmayan ≤ 5 sözcüklük paragraf (başlık) atlanır; satır başındaki
       diyalog çizgisi atılır.
     """
-    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _nfc(text or "").replace("\r\n", "\n").replace("\r", "\n")
     birimler: list[str] = []
     for para in re.split(r"\n\s*\n", text):
         para = re.sub(r"\s+", " ", para).strip()
@@ -361,7 +374,7 @@ def secili_duygular(bank: dict, duygular=None) -> tuple[list[str], list[str]]:
         return list(bank), []
     if isinstance(duygular, str):
         duygular = duygular.split(",")
-    istenen = [tr_lower(d).strip() for d in duygular if d and d.strip()]
+    istenen = [_duygu_adi(d) for d in duygular if d and d.strip()]
     katlanmis = {_fold(k): k for k in bank}
     bulunan: list[str] = []
     yok: list[str] = []
@@ -376,7 +389,7 @@ def secili_duygular(bank: dict, duygular=None) -> tuple[list[str], list[str]]:
 
 def _id(duygu: str, n: int) -> str:
     """Kayıt adı: "mutlu_0007" (duygu adındaki boşluk/işaretler alt çizgiye çevrilir)."""
-    ad = re.sub(r"\W+", "_", duygu).strip("_") or "duygu"
+    ad = re.sub(r"\W+", "_", _nfc(duygu)).strip("_") or "duygu"
     return ad + "_" + format(n, "04d")
 
 
@@ -674,10 +687,10 @@ def _metin_oku(path: Path) -> str:
     """Kullanıcı metnini okur: UTF-8 (BOM'lu olabilir); olmazsa Windows Türkçe (cp1254) denenir."""
     ham = path.read_bytes()
     try:
-        return ham.decode("utf-8-sig")
+        return _nfc(ham.decode("utf-8-sig"))
     except UnicodeDecodeError:
         print(f"Uyarı: {path} UTF-8 değil; cp1254 (Windows Türkçe) olarak okunuyor.", file=sys.stderr)
-        return ham.decode("cp1254", errors="replace")
+        return _nfc(ham.decode("cp1254", errors="replace"))
 
 
 def _arg_ayristirici() -> argparse.ArgumentParser:

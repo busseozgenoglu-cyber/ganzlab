@@ -74,6 +74,17 @@ def _ozet(sonuc: dict) -> dict:
     return ozet
 
 
+def _hata_sayisi(sonuc: dict) -> int:
+    """Üretilemeyen cümle sayısı: cümle listesindeki ``error`` alanları, yoksa özetteki ``errors``."""
+    cumleler = sonuc.get("sentences") if isinstance(sonuc, dict) else None
+    if isinstance(cumleler, list):
+        return sum(1 for s in cumleler if isinstance(s, dict) and "error" in s)
+    try:
+        return int(_ozet(sonuc).get("errors") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _float(v: Any) -> float | None:
     try:
         return None if v is None else float(v)
@@ -87,7 +98,8 @@ def karar_ver(temel: dict, ince: dict) -> tuple[bool, list[str]]:
     """Temel ve ince ayarlı kıyaslama sonuçlarından (ya da özetlerinden) kabul kararı ve Türkçe nedenler.
 
     Her koşul için bir neden döner: geçen koşullar ``"✓ "``, kalanlar ``"✗ "`` ile başlar; ölçülemeyen değer
-    koşulu geçemez. Bilgi notları (karara etki etmez) ``"ℹ "`` ile başlar.
+    koşulu geçemez. Koşullar: üretim hatası artmamış, başarıyla ölçülen cümle sayısı azalmamış, aralık medyanı
+    ≥ 17, QC başarısız artmamış, hece/sn 3,5–6,5, aralık temelden geniş.
     """
     t, i = _ozet(temel), _ozet(ince)
     nedenler: list[str] = []
@@ -101,6 +113,20 @@ def karar_ver(temel: dict, ince: dict) -> tuple[bool, list[str]]:
     if i.get("n") == 0:
         kosul(False, "", "İnce ayarlı model hiçbir cümleyi üretemedi (ölçülen cümle sayısı 0); sonuç JSON'undaki "
                          "'error' alanlarına bakın.")
+
+    # Hatalı cümleler özetten (n, qc_fail_count) düşülür: 50 cümleden 38'i hata verip 12'si iyi çıkan bir model
+    # yalnız o 12 cümleyle "ifadeli" görünmesin diye hata ve başarı sayıları ayrıca denetlenir.
+    hata_t, hata_i = _hata_sayisi(temel), _hata_sayisi(ince)
+    kosul(hata_i <= hata_t,
+          f"Üretim hatası artmadı (temel {hata_t}, ince {hata_i} cümle).",
+          f"İnce ayarlı modelde üretim hatası arttı (temel {hata_t} → ince {hata_i} cümle): bu cümleler ölçüme "
+          f"girmedi, özet yanıltıcı olabilir — sonuç JSON'undaki 'error' alanlarına bakın.")
+    n_t, n_i = t.get("n"), i.get("n")
+    if n_t is not None and n_i is not None:
+        kosul(int(n_i) >= int(n_t),
+              f"Başarıyla ölçülen cümle sayısı azalmadı ({n_t} → {n_i}).",
+              f"Başarıyla ölçülen cümle sayısı azaldı (temel {n_t} → ince {n_i}): ince model bazı cümleleri "
+              f"üretemedi ya da farklı bir cümle setiyle ölçüldü; kıyas aynı cümlelerle yapılmalı.")
 
     ar_i, ar_t = _float(i.get("range_semitones_median")), _float(t.get("range_semitones_median"))
     if ar_i is None:
@@ -143,11 +169,6 @@ def karar_ver(temel: dict, ince: dict) -> tuple[bool, list[str]]:
               f"Tonlama aralığı temelden {_sayi(fark)} yarım ton geniş ({_sayi(ar_t)} → {_sayi(ar_i)}).",
               f"Tonlama aralığı temelden geniş değil ({_sayi(ar_t)} → {_sayi(ar_i)}, fark {_sayi(fark)}): "
               f"ince ayar ifadeyi artırmamış.")
-
-    n_t, n_i = t.get("n"), i.get("n")
-    if n_t is not None and n_i is not None and n_t != n_i:
-        nedenler.append(f"ℹ Ölçülen cümle sayıları farklı (temel {n_t}, ince {n_i}); karşılaştırma aynı cümle "
-                        "setiyle yapılmalı.")
     return kabul, nedenler
 
 
@@ -178,14 +199,20 @@ def _bellek_birak() -> None:
 
 
 def model_kos(etiket: str, *, arka_uc: str, ince: str | None, sentences: list[dict], ref: str | None,
-              ayarlar: dict, pipeline: bool, repeat: int, cihaz: str, etiketli: bool, sessiz: bool) -> dict:
-    """Bir modeli (temel ya da ince ayarlı) kurar ve cümle setini ``bench.run_bench`` ile ölçer."""
+              ayarlar: dict, pipeline: bool, repeat: int, cihaz: str, etiketli: bool, metin_etiketli: bool,
+              sessiz: bool, cumle_dosyasi: str | None = None) -> dict:
+    """Bir modeli (temel ya da ince ayarlı) kurar ve cümle setini ``bench.run_bench`` ile ölçer.
+
+    ``etiketli``: arka uç düzeyinde ``T3_EMOTION_TAGS`` (yalnız ince koşuda açılır; chatterbox arka ucu parça
+    duygusunu ``[mutlu] `` öneki olarak ekler). ``metin_etiketli``: cümle metnine ``[duygu]`` etiketi yazılsın mı —
+    iki koşuda **aynı** olmalı (boru hattında motor etiketi duygu profili olarak da uygular; bkz. :func:`metin_etiketi`).
+    """
     from app import backends, bench
 
     _ortam_ayarla(ince, etiketli)
     if not sessiz:
         print(f"\n▶ {etiket}: {arka_uc}" + (f" + {Path(ince).name}" if ince else "") + f" • {len(sentences)} cümle • "
-              f"cihaz {cihaz}" + (" • boru hattı" if pipeline else "") + (" • duygu etiketli" if etiketli else ""),
+              f"cihaz {cihaz}" + (" • boru hattı" if pipeline else "") + (" • T3 duygu öneki" if etiketli else ""),
               file=sys.stderr, flush=True)
 
     def ilerleme(i: int, n: int, metin: str) -> None:
@@ -194,14 +221,79 @@ def model_kos(etiket: str, *, arka_uc: str, ince: str | None, sentences: list[di
     model = backends.create(arka_uc, device=cihaz)
     try:
         sonuc = bench.run_bench(arka_uc, sentences, ref=ref, settings=ayarlar, pipeline=pipeline, repeat=repeat,
-                                device=cihaz, emotion_tags=etiketli, progress=None if sessiz else ilerleme,
+                                device=cihaz, emotion_tags=metin_etiketli, progress=None if sessiz else ilerleme,
                                 model=model)
     finally:
         del model
         _bellek_birak()
-    sonuc["settings"]["finetuned"] = ince
-    sonuc["settings"]["rol"] = etiket
+    sonuc["settings"].update({"finetuned": ince, "rol": etiket, "t3_emotion_tags": bool(etiketli),
+                              "sentences_file": str(cumle_dosyasi) if cumle_dosyasi else None,
+                              "n_sentences": len(sentences)})
     return sonuc
+
+
+def metin_etiketi(pipeline: bool, etiketli: bool) -> bool:
+    """İki koşuda da aynı olan metin etiketi kararı.
+
+    * Ham mod: metin etiketsiz; ``bench`` her cümlenin duygusunu ``emotion`` parametresiyle gönderir, ince koşuda
+      arka uç (``T3_EMOTION_TAGS=1``) öneki kendisi ekler, temel arka uç eklemez. Böylece iki model aynı metni alır.
+    * Boru hattı + ``--etiketli``: metin iki koşuda da ``[duygu] …`` olur; motor etiketi iki koşuda da aynı duygu
+      profili olarak uygular ve parçanın duygusunu arka uca iletir (ince koşuda yine önek olur).
+    """
+    return bool(pipeline and etiketli)
+
+
+# ---------- kıyasın adilliği ----------
+
+_KIYAS_ADLARI = (("pipeline", "boru hattı"), ("ref", "referans dosyası"), ("seed", "tohum"),
+                 ("sentences_file", "cümle dosyası"), ("n", "cümle sayısı"), ("exaggeration", "exaggeration"),
+                 ("cfg_weight", "cfg_weight"), ("temperature", "temperature"), ("repeat", "tekrar"),
+                 ("emotion_tags", "metindeki duygu etiketi"))
+
+
+def kiyas_ayarlari(settings: dict | None, n: int | None) -> dict:
+    """Bir sonucun kıyası etkileyen ayarları, karşılaştırılabilir biçimde (dosya yolları yalnız adıyla)."""
+    from app import bench
+
+    st = settings or {}
+    dosya = st.get("sentences_file") or str(bench.DEFAULT_SENTENCES)
+    return {"pipeline": bool(st.get("pipeline")), "ref": Path(str(st["ref"])).name if st.get("ref") else None,
+            "seed": st.get("seed"), "sentences_file": Path(str(dosya)).name, "n": n,
+            "exaggeration": st.get("exaggeration"), "cfg_weight": st.get("cfg_weight"),
+            "temperature": st.get("temperature"), "repeat": st.get("repeat") or 1,
+            "emotion_tags": bool(st.get("emotion_tags"))}
+
+
+def _sonuc_kiyas_ayarlari(sonuc: dict) -> dict:
+    cumleler = sonuc.get("sentences")
+    n = len(cumleler) if isinstance(cumleler, list) else (sonuc.get("settings") or {}).get("n_sentences")
+    return kiyas_ayarlari(sonuc.get("settings"), n)
+
+
+def ayar_farklari(a: dict, b: dict, *, ad_a: str = "temel", ad_b: str = "ince ayar") -> list[str]:
+    """İki kıyas ayarı sözlüğünün farkları → Türkçe uyarılar ("kıyas adil olmayabilir")."""
+    uyarilar = []
+    for anahtar, ad in _KIYAS_ADLARI:
+        va, vb = a.get(anahtar), b.get(anahtar)
+        if va is None and vb is None:
+            continue
+        if isinstance(va, (int, float)) and isinstance(vb, (int, float)) and not isinstance(va, bool):
+            ayni = abs(float(va) - float(vb)) < 1e-9
+        else:
+            ayni = va == vb
+        if not ayni:
+            uyarilar.append(f"{ad} farklı ({ad_a}: {_deger(va)}, {ad_b}: {_deger(vb)}) — kıyas adil olmayabilir.")
+    return uyarilar
+
+
+def _deger(v: Any) -> str:
+    if v is None:
+        return "yok"
+    if isinstance(v, bool):
+        return "evet" if v else "hayır"
+    if isinstance(v, float):
+        return _sayi(v, 2)
+    return str(v)
 
 
 # ---------- konsol ----------
@@ -245,11 +337,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ref", default=None, help="konuşmacının referans kaydı (WAV) — model koşusu için gerekli")
     ap.add_argument("--ince", default=None, metavar="DOSYA", help="ince ayarlı T3 ağırlıkları (.safetensors / .pt)")
     ap.add_argument("--cumleler", default=None, metavar="DOSYA",
-                    help="cümle dosyası, 'kategori|cümle' (varsayılan: backend/app/bench_tr.txt)")
+                    help="cümle dosyası, 'kategori|cümle' (varsayılan: backend/data/bench_tr.txt)")
     ap.add_argument("--cikti", default=None, metavar="JSON", help="raporu (iki sonuç + karşılaştırma + karar) yaz")
     ap.add_argument("--pipeline", action="store_true", help="tüm motor zinciriyle (Engine.synthesize) ölç")
     ap.add_argument("--etiketli", action="store_true",
-                    help="ince ayar verisi '[duygu] ' etiketliyse: ince koşuda T3_EMOTION_TAGS=1 ve --emotion-tags")
+                    help="ince ayar verisi '[duygu] ' etiketliyse: ince koşuda T3_EMOTION_TAGS=1 (iki koşu aynı "
+                         "metni alır; --pipeline ile metin iki koşuda da etiketli)")
     ap.add_argument("--temel", default=None, metavar="JSON", help="hazır temel sonuç (app.bench --out çıktısı)")
     ap.add_argument("--ince-sonuc", default=None, metavar="JSON", help="hazır ince ayar sonucu (app.bench --out)")
     ap.add_argument("--arka-uc", default="chatterbox", help="arka uç (varsayılan: chatterbox; 'fake' kuru çalışma)")
@@ -281,6 +374,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--repeat en az 1 olmalı.")
         temel = bench._read_result(args.temel) if args.temel else None
         ince = bench._read_result(args.ince_sonuc) if args.ince_sonuc else None
+        uyarilar: list[str] = []
+        if temel is not None and ince is not None:
+            uyarilar = ayar_farklari(_sonuc_kiyas_ayarlari(temel), _sonuc_kiyas_ayarlari(ince))
 
         if temel is None or ince is None:          # en az bir model koşusu gerekiyor
             if ince is None and not args.ince:
@@ -298,8 +394,21 @@ def main(argv: list[str] | None = None) -> int:
             ayarlar = {"exaggeration": args.exaggeration, "cfg_weight": args.cfg_weight,
                        "temperature": args.temperature, "seed": args.seed}
             cihaz = args.cihaz or bench._auto_device()
+            metin_etiketli = metin_etiketi(args.pipeline, args.etiketli)
             ortak = dict(arka_uc=args.arka_uc, sentences=sentences, ref=args.ref, ayarlar=ayarlar,
-                         pipeline=args.pipeline, repeat=args.repeat, cihaz=cihaz, sessiz=args.quiet)
+                         pipeline=args.pipeline, repeat=args.repeat, cihaz=cihaz, sessiz=args.quiet,
+                         metin_etiketli=metin_etiketli, cumle_dosyasi=args.cumleler)
+            # Hazır bir sonuçla yeni koşu kıyaslanacaksa ayarları önceden karşılaştır (uzun koşudan önce uyar)
+            plan = kiyas_ayarlari({"pipeline": args.pipeline, "ref": args.ref, "seed": args.seed,
+                                   "sentences_file": args.cumleler, "exaggeration": args.exaggeration,
+                                   "cfg_weight": args.cfg_weight, "temperature": args.temperature,
+                                   "repeat": args.repeat, "emotion_tags": metin_etiketli}, len(sentences))
+            if temel is not None:
+                uyarilar = ayar_farklari(_sonuc_kiyas_ayarlari(temel), plan, ad_b="yeni koşu")
+            elif ince is not None:
+                uyarilar = ayar_farklari(plan, _sonuc_kiyas_ayarlari(ince), ad_a="yeni koşu")
+            for u in uyarilar:
+                print(f"UYARI: {u}", file=sys.stderr, flush=True)
             onceki = {k: os.environ.get(k) for k in ("T3_FINETUNED", "T3_EMOTION_TAGS")}
             try:
                 if temel is None:
@@ -322,6 +431,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.quiet:
             print(tablo)
         print(karar_metni(kabul, nedenler))
+        if uyarilar:
+            print("\nKıyas uyarıları (ayarlar farklı — kıyas adil olmayabilir):")
+            for u in uyarilar:
+                print(f"  ⚠ {u}")
         if args.cikti:
             _yaz_json(args.cikti, {
                 "version": SURUM,
@@ -329,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
                 "olcut": {"aralik_medyani_en_az": HEDEF_ARALIK, "hece_sn": [HECE_MIN, HECE_MAX],
                           "qc_fail_artmamali": True, "aralik_temelden_genis": True},
                 "karar": {"kabul": kabul, "sonuc": "KABUL" if kabul else "RET", "nedenler": nedenler},
+                "uyarilar": uyarilar,
                 "karsilastirma": cmp,
                 "temel": temel,
                 "ince": ince,

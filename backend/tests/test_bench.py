@@ -22,7 +22,7 @@ CUMLELER = [
     {"id": "t3", "category": "soru", "text": "Sen gerçekten bunu tek başına mı hallettin?"},
 ]
 
-CUMLE_ANAHTARLARI = {"id", "category", "text", "input_text", "duration_s", "gen_s", "rtf", "f0", "syllables_per_sec",
+CUMLE_ANAHTARLARI = {"id", "category", "text", "normalized_text", "input_text", "duration_s", "gen_s", "rtf", "f0", "syllables_per_sec",
                      "chars_per_sec", "pauses", "dynamic_range_db", "qc", "speech_ratio"}
 F0_ANAHTARLARI = {"median_hz", "min_hz", "max_hz", "range_semitones", "std_semitones", "voiced_ratio"}
 OZET_ANAHTARLARI = {"n", "rtf_mean", "rtf_median", "range_semitones_median", "range_semitones_mean",
@@ -54,9 +54,10 @@ def test_sahte_arka_ucla_sema_tam(iki_ayar):
     assert r["backend"]["name"] == "fake" and r["backend"]["sr"] == 24000 and r["backend"]["model_id"] == "sahte-sinyal"
     st = r["settings"]
     for k in ("backend", "ref", "exaggeration", "cfg_weight", "temperature", "seed", "pipeline", "repeat",
-              "emotion_tags", "language", "device"):
+              "emotion_tags", "language", "device", "normalize"):
         assert k in st, k
     assert st["backend"] == "fake" and st["exaggeration"] == 0.2 and st["seed"] == 1 and st["pipeline"] is False
+    assert st["normalize"] is True
     assert len(r["sentences"]) == 3
     for s in r["sentences"]:
         assert CUMLE_ANAHTARLARI <= set(s), set(s) ^ CUMLE_ANAHTARLARI
@@ -86,6 +87,44 @@ def test_exaggeration_araligi_acar_ve_compare_kazanani_dogru(iki_ayar):
     assert compare(b, a)["winner"] == "a"
     tablo = bench.format_compare(c)
     assert "Kazanan: B" in tablo and "Tonlama aralığı medyanı" in tablo
+
+
+def _hatali(result: dict, kac: int) -> dict:
+    """Sonucun son ``kac`` cümlesini hata satırına çevirir ve özeti yeniden hesaplar."""
+    import copy
+
+    r = copy.deepcopy(result)
+    for s in r["sentences"][-kac:]:
+        for k in list(s):
+            if k not in ("id", "category", "text", "input_text"):
+                del s[k]
+        s["error"] = "RuntimeError: model çöktü"
+    r["summary"] = summarize(r["sentences"])
+    return r
+
+
+def test_compare_hatali_cumleler_kazanani_belirler(iki_ayar):
+    a, b = iki_ayar
+    b_hatali = _hatali(b, 2)                      # B'nin 3 cümlesinden 2'si hata: aralığı yine de yüksek
+    assert b_hatali["summary"]["n"] == 1 and b_hatali["summary"]["errors"] == 2
+    assert b_hatali["summary"]["range_semitones_median"] > a["summary"]["range_semitones_median"]
+    c = compare(a, b_hatali)
+    assert c["winner"] == "a" and c["note"] and "B" in c["note"]
+    satir = c["summary"][0]
+    assert satir["metric"] == "errors" and satir["label"] == "Hatalı cümle"
+    assert (satir["a"], satir["b"], satir["delta"], satir["better"]) == (0, 2, 2, "a")
+    assert "Hatalı cümle" in bench.format_compare(c) and "Not:" in bench.format_compare(c)
+    assert [s["id"] for s in c["sentences"]] == ["t1"]          # yalnızca iki tarafta da ölçülen cümleler
+    # tersi: A daha çok hata verirse A asla kazanamaz
+    c2 = compare(_hatali(b, 2), a)
+    assert c2["winner"] == "b"
+    # iki taraf eşit sayıda hata verdiyse hata oyu kimseye gitmez, ölçümler karar verir
+    c3 = compare(_hatali(a, 1), _hatali(b, 1))
+    assert c3["summary"][0]["better"] == "-" and c3["winner"] == "b" and c3["note"] is None
+    # özetinde "errors" alanı olmayan eski sonuçlar: hata sayısı cümle satırlarından sayılır
+    eski = _hatali(b, 2)
+    del eski["summary"]["errors"]
+    assert compare(a, eski)["winner"] == "a"
 
 
 def test_compare_ayni_sonuc_berabere(iki_ayar):
@@ -161,6 +200,49 @@ def test_pipeline_engine_zincirinden_gecer(monkeypatch, sentetik_wav):
         assert s["pipeline"]["chunks"] >= 1 and s["qc"]["score"] is not None and s["gen_s"] > 0
 
 
+# ---------- metin normalizasyonu (ham mod) ----------
+
+SAYILI = [{"id": "s1", "category": "mutlu", "text": "Saat 14:30'da %12 indirim var, 87,50 TL!"},
+          {"id": "s2", "category": "sayı", "text": "Dr. Aydın 3,5 kg aldı."}]
+
+
+def test_ham_mod_metni_normalize_eder_etiket_sonra_eklenir():
+    model = FakeBackend()
+    r = run_bench("fake", SAYILI, emotion_tags=True, model=model)
+    giden = [c["text"] for c in model.calls]
+    for t in giden:
+        for ham in ("14:30", "%", "87,50", "TL", "Dr.", "3,5", "kg"):
+            assert ham not in t, (ham, t)
+    assert giden[0].startswith("[mutlu] ") and "on dört otuz" in giden[0] and "yüzde on iki" in giden[0]
+    assert not giden[1].startswith("[")                     # sayı kategorisi etiket almaz
+    s1 = r["sentences"][0]
+    assert s1["text"] == SAYILI[0]["text"]                  # özgün cümle korunur
+    assert s1["normalized_text"] and not s1["normalized_text"].startswith("[")
+    assert s1["input_text"] == "[mutlu] " + s1["normalized_text"] == giden[0]
+    assert r["settings"]["normalize"] is True
+
+
+def test_ham_metin_normalizasyonu_kapatir():
+    model = FakeBackend()
+    r = run_bench("fake", SAYILI[:1], normalize=False, model=model)
+    assert model.calls[0]["text"] == SAYILI[0]["text"]
+    assert r["settings"]["normalize"] is False and r["sentences"][0]["normalized_text"] == SAYILI[0]["text"]
+
+
+def test_main_ham_metin_bayragi(tmp_path):
+    dosya = tmp_path / "set.txt"
+    dosya.write_text("sayı|Kira %12 arttı.\n", encoding="utf-8")
+    for bayrak, normalize_mi in (("--ham-metin", False), ("--no-normalize", False), (None, True)):
+        out = tmp_path / "n.json"
+        argv = ["--backend", "fake", "--sentences", str(dosya), "--quiet", "--out", str(out)]
+        if bayrak:
+            argv.append(bayrak)
+        assert bench.main(argv) == 0
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["settings"]["normalize"] is normalize_mi
+        assert ("%12" in data["sentences"][0]["input_text"]) is (not normalize_mi)
+
+
 # ---------- duygu etiketleri ----------
 
 def test_emotion_tags_yalnizca_duygu_kategorileri():
@@ -230,6 +312,23 @@ def test_bilinmeyen_arka_uc_turkce_hata(capsys):
     assert bench.main(["--backend", "yok-boyle-bir-model", "--limit", "1"]) == 1
     err = capsys.readouterr().err
     assert "Bilinmeyen arka uç" in err and "yok-boyle-bir-model" in err
+
+
+@pytest.mark.parametrize("hata", [ImportError("libtorch_cpu.so açılamadı"), OSError("model dosyası bozuk"),
+                                  RuntimeError("CUDA belleği yetersiz")])
+def test_arka_uc_yuklenemezse_turkce_hata(monkeypatch, capsys, hata):
+    from app import backends
+
+    def bozuk_create(*a, **k):
+        raise hata
+
+    monkeypatch.setattr(backends, "create", bozuk_create)
+    assert bench.main(["--backend", "fake", "--limit", "1"]) == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "Hata:" in err and "'fake' arka ucu yüklenemedi" in err and str(hata) in err
+    with pytest.raises(bench.BenchError):
+        run_bench("fake", CUMLELER[:1])
 
 
 def test_eksik_dosyalar_turkce_hata(tmp_path, capsys):

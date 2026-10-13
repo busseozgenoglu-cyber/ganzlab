@@ -20,7 +20,7 @@ import soundfile as sf
 
 from app import backends, config
 from app.backends import BackendUnavailable
-from app.backends.f5_turkish import F5TurkishBackend
+from app.backends.f5_turkish import F5TurkishBackend, ses_suresi
 from app.backends.fake import speechlike
 from app.engine import Engine, VoiceRefs
 
@@ -287,3 +287,147 @@ def test_motor_f5_referanssiz_turkce_hata(sahte_f5):
     with pytest.raises(ValueError) as exc:
         eng.synthesize("Merhaba dünya.", "tr", None, master=False, breaths=False, room_tone=False, qc=False)
     assert "referans kaydı olmadan" in str(exc.value)
+
+
+# ---------- tohum tek kullanımlık ----------
+
+def test_f5_tohum_tek_kullanimlik(sahte_f5):
+    """Tohumlu istekten sonra tohumsuz istekler eski tohumu almaz; F5'e seed hiç gönderilmez (rastgele seçer)."""
+    m = F5TurkishBackend()
+    m.seed(5)
+    m.generate("Birinci.", audio_prompt_path=str(sahte_f5["ref"]), ref_text="Selam.")
+    m.generate("İkinci.", audio_prompt_path=str(sahte_f5["ref"]), ref_text="Selam.")
+    m.generate("Üçüncü.", audio_prompt_path=str(sahte_f5["ref"]), ref_text="Selam.")
+    assert [c["seed"] for c in sahte_f5["infer"]] == [5, None, None] and m._seed is None
+    # infer'e "seed" anahtarı hiç gitmez: imzası seed bilmeyen bir infer de çalışır
+    alinan = []
+    m._model.infer = lambda ref_file, ref_text, gen_text: (alinan.append(gen_text) or np.zeros(2400), 24000, None)
+    m.seed(9)
+    m.generate("Dört.", audio_prompt_path=str(sahte_f5["ref"]), ref_text="x")
+    assert alinan == ["Dört."] and m._seed is None
+
+
+def test_motor_f5_tohumsuz_istek_onceki_tohumu_almaz(sahte_f5):
+    eng = Engine(backend="f5-tr")
+    refs = VoiceRefs("v", base=Path(sahte_f5["ref"]), by_emotion={})
+    eng.synthesize("Merhaba dünya.", "tr", refs, seed=5, master=False, breaths=False, room_tone=False, qc=False)
+    n = len(sahte_f5["infer"])
+    assert n and all(c["seed"] is not None for c in sahte_f5["infer"])
+    eng.synthesize("Bugün hava güzel.", "tr", refs, seed=None, master=False, breaths=False, room_tone=False,
+                   qc=False)
+    sonraki = sahte_f5["infer"][n:]
+    assert sonraki and all(c["seed"] is None for c in sonraki)
+
+
+# ---------- uzun referans: F5'in 12 sn kırpmasıyla aynı kırpma ----------
+
+def _uzun_referans(yol: Path, bolumler: list[tuple[str, float]], sr: int = 24000) -> Path:
+    """("konuşma"|"sessizlik", sn) bölümlerinden WAV yazar."""
+    parcalar = []
+    for i, (tur, sn) in enumerate(bolumler):
+        if tur == "konuşma":
+            p = speechlike(int(sn / 0.07), sr, seed=i)[: int(sn * sr)]
+        else:
+            p = np.zeros(int(sn * sr), dtype=np.float32)
+        parcalar.append(p)
+    sf.write(str(yol), np.concatenate(parcalar), sr)
+    return yol
+
+
+def test_f5_uzun_referans_sessizlikten_kirpilir_transkript_kirpilmistan(sahte_f5):
+    uzun = _uzun_referans(sahte_f5["tmp"] / "uzun.wav", [("konuşma", 5.0), ("sessizlik", 1.5), ("konuşma", 4.0),
+                                                         ("sessizlik", 1.2), ("konuşma", 4.0)])
+    assert ses_suresi(str(uzun)) > 15.0
+    m = F5TurkishBackend()
+    m.clip_dir = sahte_f5["tmp"] / "kirp"
+    m.generate("Merhaba.", audio_prompt_path=str(uzun))
+    kirpik = sahte_f5["infer"][-1]["ref_file"]
+    assert kirpik != str(uzun) and Path(kirpik).parent == m.clip_dir
+    sure = ses_suresi(kirpik)
+    assert 8.0 <= sure <= 12.0, sure                   # son 4 sn'lik konuşma (sessizlikten) atıldı
+    assert sahte_f5["transcribe"] == [{"ref_audio": kirpik, "language": "tr"}]    # transkript kırpılmış sesten
+    # önbellek: ikinci üretim yeniden kırpmaz, transkripti de yeniden çıkarmaz
+    mtime = Path(kirpik).stat().st_mtime_ns
+    m.generate("Tekrar.", audio_prompt_path=str(uzun))
+    assert sahte_f5["infer"][-1]["ref_file"] == kirpik and Path(kirpik).stat().st_mtime_ns == mtime
+    assert len(sahte_f5["transcribe"]) == 1 and len(list(m.clip_dir.iterdir())) == 1
+
+
+def test_f5_uzun_referansta_verilen_ref_text_yok_sayilir(sahte_f5, caplog):
+    uzun = _uzun_referans(sahte_f5["tmp"] / "uzun2.wav", [("konuşma", 14.0)])
+    m = F5TurkishBackend()
+    m.clip_dir = sahte_f5["tmp"] / "kirp"
+    with caplog.at_level(logging.WARNING, logger="sesklon.backends.f5"):
+        m.generate("Merhaba.", audio_prompt_path=str(uzun), ref_text="tam kaydın on dört saniyelik metni")
+    c = sahte_f5["infer"][-1]
+    assert c["ref_text"] == "referans metni" and c["ref_file"] != str(uzun)
+    assert ses_suresi(c["ref_file"]) <= 12.05            # sessizlik yok → ilk 12 sn kesildi (+50 ms)
+    assert any("yok sayılıyor" in r.getMessage() for r in caplog.records)
+
+
+def test_f5_kisa_referans_kirpilmaz(sahte_f5):
+    m = F5TurkishBackend()
+    m.clip_dir = sahte_f5["tmp"] / "kirp"
+    assert ses_suresi(str(sahte_f5["ref"])) < 12.0
+    assert m.clip_reference(str(sahte_f5["ref"])) == str(sahte_f5["ref"])
+    m.generate("Merhaba.", audio_prompt_path=str(sahte_f5["ref"]), ref_text="Selam.")
+    assert sahte_f5["infer"][-1]["ref_file"] == str(sahte_f5["ref"]) and not m.clip_dir.exists()
+    assert m.clip_reference(str(sahte_f5["tmp"] / "yok.wav")) == str(sahte_f5["tmp"] / "yok.wav")
+
+
+def test_f5_pydub_varsa_f5_ile_ayni_cagrilar(sahte_f5, monkeypatch):
+    """pydub kuruluysa (f5-tts bağımlılığı) kırpma upstream preprocess_ref_audio_text'in parametreleriyle yapılır."""
+    cagri: dict = {"split": [], "lead": [], "export": []}
+
+    class Seg:
+        frame_rate = 24000
+
+        def __init__(self, ms):
+            self.ms = ms
+
+        def __len__(self):
+            return self.ms
+
+        def __add__(self, o):
+            return Seg(self.ms + o.ms)
+
+        def __getitem__(self, sl):
+            return Seg(len(range(self.ms)[sl]))
+
+        def reverse(self):
+            return self
+
+        def export(self, yol, format=None):
+            cagri["export"].append((yol, format, self.ms))
+            sf.write(yol, np.zeros(int(self.ms * 24)), 24000)
+
+    class AudioSegment:
+        @staticmethod
+        def from_file(yol):
+            return Seg(15700)
+
+        @staticmethod
+        def silent(duration=1000, frame_rate=11025):
+            return Seg(duration)
+
+    def split_on_silence(aseg, **kw):
+        cagri["split"].append(kw)
+        return [Seg(5000), Seg(5000), Seg(5700)]
+
+    def detect_leading_silence(seg, silence_threshold=-50.0, chunk_size=10):
+        cagri["lead"].append(silence_threshold)
+        return 100
+
+    silence = _modul("pydub.silence", split_on_silence=split_on_silence,
+                     detect_leading_silence=detect_leading_silence)
+    pydub = _modul("pydub", AudioSegment=AudioSegment, silence=silence)
+    monkeypatch.setitem(sys.modules, "pydub", pydub)
+    monkeypatch.setitem(sys.modules, "pydub.silence", silence)
+    uzun = _uzun_referans(sahte_f5["tmp"] / "uzun3.wav", [("konuşma", 15.7)])
+    m = F5TurkishBackend()
+    m.clip_dir = sahte_f5["tmp"] / "kirp"
+    kirpik = m.clip_reference(str(uzun))
+    assert cagri["split"] == [{"min_silence_len": 1000, "silence_thresh": -50, "keep_silence": 1000,
+                               "seek_step": 10}]           # ilk adım 12 sn'nin altına indirdi
+    assert cagri["lead"] == [-42, -42]
+    assert cagri["export"] == [(kirpik, "wav", 10000 - 200 + 50)]

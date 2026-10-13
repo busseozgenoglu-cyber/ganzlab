@@ -112,9 +112,13 @@ def sahte_mlx(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.setattr(config, "MLX_MODEL", "mlx-community/chatterbox-multilingual-v3")
     monkeypatch.setattr(config, "T3_EMOTION_TAGS", False)
+    monkeypatch.setattr(config, "T3_EMOTION_SET", "", raising=False)
     monkeypatch.setattr(config, "T3_FINETUNED", None)
     monkeypatch.setattr(config, "DEVICE", None)
     return kayit
+
+
+INCE_AYARLI_MLX = "/modeller/sesklon-t3-ince-ayar-mlx"
 
 
 # ---------- kurulum / kayıt defteri ----------
@@ -303,7 +307,8 @@ def test_mlx_bos_cikti_turkce_hata(sahte_mlx):
     assert "ses üretmedi" in str(exc.value)
 
 
-def test_mlx_duygu_etiketi(sahte_mlx, monkeypatch):
+def test_mlx_duygu_etiketi_ince_ayarli_modelde(sahte_mlx, monkeypatch):
+    monkeypatch.setattr(config, "MLX_MODEL", INCE_AYARLI_MLX)
     m = ChatterboxMlxBackend()
     monkeypatch.setattr(config, "T3_EMOTION_TAGS", True)
     for duygu in ("mutlu", "normal", None, "Üzgün", "kızgın"):
@@ -311,11 +316,78 @@ def test_mlx_duygu_etiketi(sahte_mlx, monkeypatch):
     texts = [c["text"] for c in m._model.calls]
     assert texts == ["[mutlu] Merhaba dünya.", "Merhaba dünya.", "Merhaba dünya.", "[üzgün] Merhaba dünya.",
                      "[kızgın] Yeter artık!"]
-    assert m.info()["emotion_tags"] is True
+    info = m.info()
+    assert info["emotion_tags"] is True and "mutlu" in info["emotion_set"] and "normal" not in info["emotion_set"]
     monkeypatch.setattr(config, "T3_EMOTION_TAGS", False)
     m.generate("Merhaba dünya.", emotion="mutlu")
-    assert m._model.calls[-1]["text"] == "Merhaba dünya."
-    assert ChatterboxMlxBackend.tag_text("Selam", "  ") == "Selam"
+    assert m._model.calls[-1]["text"] == "Merhaba dünya." and m.info()["emotion_tags"] is False
+    monkeypatch.setattr(config, "T3_EMOTION_TAGS", True)
+    assert m.tag_text("Selam", "  ") == "Selam"
+    assert m.tag_text("Selam", "uydurma-duygu") == "Selam"          # bankada olmayan duygu etiket almaz
+
+
+@pytest.mark.parametrize("finetuned", [None, "/x/t3_finetuned.safetensors"])
+def test_mlx_varsayilan_modelde_etiketler_atlanir_bir_kez_uyarir(sahte_mlx, monkeypatch, caplog, finetuned):
+    """Temel MLX modeli etiketi görmedi: T3_EMOTION_TAGS=1 (+ T3_FINETUNED) olsa da önek eklenmez, tek uyarı."""
+    monkeypatch.setattr(config, "T3_EMOTION_TAGS", True)
+    monkeypatch.setattr(config, "T3_FINETUNED", finetuned)
+    with caplog.at_level("WARNING", logger="sesklon.backends.chatterbox_mlx"):
+        m = ChatterboxMlxBackend()
+        m.generate("Merhaba dünya.", emotion="mutlu")
+        m.generate("Yeter artık!", emotion="kızgın")
+    assert [c["text"] for c in m._model.calls] == ["Merhaba dünya.", "Yeter artık!"]
+    uyarilar = [r for r in caplog.records if "etiketleri atlanıyor" in r.getMessage()]
+    assert len(uyarilar) == 1
+    if finetuned:
+        assert "MLX'e uygulanmadığı" in uyarilar[0].getMessage()
+    assert m.info()["emotion_tags"] is False and m.info()["emotion_set"] == []
+
+
+def test_mlx_varsayilan_model_sonradan_acilan_etiket_uyarisi(sahte_mlx, monkeypatch, caplog):
+    m = ChatterboxMlxBackend()                                  # açılışta etiket kapalı → uyarı yok
+    monkeypatch.setattr(config, "T3_EMOTION_TAGS", True)
+    with caplog.at_level("WARNING", logger="sesklon.backends.chatterbox_mlx"):
+        m.generate("Merhaba.", emotion="mutlu")
+        m.generate("Merhaba.", emotion="mutlu")
+    assert sum("etiketleri atlanıyor" in r.getMessage() for r in caplog.records) == 1
+    assert m._model.calls[-1]["text"] == "Merhaba."
+
+
+def test_mlx_duygu_kumesi_pytorch_ile_ayni():
+    """Bilerek tekrarlanan liste PyTorch arka ucununkiyle aynı kalmalı (ayrışırsa bu test yakalar)."""
+    from app.backends.chatterbox import DEFAULT_EMOTION_SET
+    from app.backends.chatterbox_mlx import VARSAYILAN_DUYGU_KUMESI
+
+    assert tuple(VARSAYILAN_DUYGU_KUMESI) == tuple(DEFAULT_EMOTION_SET)
+
+
+@pytest.mark.parametrize("model, beklenen", [
+    ("mlx-community/chatterbox-multilingual-v3", True), ("MLX-Community/Chatterbox-Multilingual-V3/", True),
+    (" mlx-community/chatterbox-multilingual-v3 ", True), (INCE_AYARLI_MLX, False),
+    ("mlx-community/chatterbox-fp16", False),
+])
+def test_mlx_varsayilan_model_tespiti(model, beklenen):
+    from app.backends.chatterbox_mlx import varsayilan_model_mi
+
+    assert varsayilan_model_mi(model) is beklenen
+
+
+def test_mlx_duygu_kumesi_suzgeci(sahte_mlx, monkeypatch):
+    monkeypatch.setattr(config, "MLX_MODEL", INCE_AYARLI_MLX)
+    monkeypatch.setattr(config, "T3_EMOTION_TAGS", True)
+    monkeypatch.setattr(config, "T3_EMOTION_SET", "Mutlu, ÜZGÜN ,normal")
+    m = ChatterboxMlxBackend()
+    for duygu in ("mutlu", "üzgün", "kızgın", "normal"):
+        m.generate("Merhaba.", emotion=duygu)
+    assert [c["text"] for c in m._model.calls] == ["[mutlu] Merhaba.", "[üzgün] Merhaba.", "Merhaba.", "Merhaba."]
+    assert m.info()["emotion_set"] == ["mutlu", "üzgün"]
+    # config'te T3_EMOTION_SET hiç yoksa boş sayılır → bankadaki 19 duygu
+    monkeypatch.delattr(config, "T3_EMOTION_SET")
+    from app.backends.chatterbox_mlx import VARSAYILAN_DUYGU_KUMESI, duygu_kumesi
+
+    assert duygu_kumesi() == frozenset(VARSAYILAN_DUYGU_KUMESI) and len(VARSAYILAN_DUYGU_KUMESI) == 19
+    m.generate("Merhaba.", emotion="kızgın")
+    assert m._model.calls[-1]["text"] == "[kızgın] Merhaba."
 
 
 def test_mlx_seed(sahte_mlx, monkeypatch):

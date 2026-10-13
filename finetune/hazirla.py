@@ -29,13 +29,16 @@ Adımlar (hepsi ``app`` modülleriyle):
    ``app.textnorm.normalize(raw_text)``. ``--etiket`` ile duygu ``normal`` değilse iki sütunun başına
    ``[duygu] `` eklenir — normalize SONRASI (normalize köşeli parantezli etiketi siler).
 6. ``--boleme --transkriptsiz`` birlikte verilirse 10 sn'den uzun kayıtlar sessizliklerden 3–10 sn parçalara
-   bölünür (``<id>_01``, ``<id>_02`` …) ve parçaların metin sütunları boş kalır (eğitimden önce ASR ile
-   doldurulmalı). Aksi hâlde bölme yapılmaz: metni olan uzun kaydın hangi sözcüğünün hangi parçaya düştüğü
+   bölünür (``<id>_01``, ``<id>_02`` …). Metni olmayan klipler ``metadata.csv``'ye YAZILMAZ (eğitim deposu
+   pandas ile okur; boş alan NaN → "nan" metniyle eğitilirdi): ``metadata_transkriptsiz.csv``'ye ``ad||``
+   satırları olarak gider; kullanıcı Whisper ile doldurup ``metadata.csv``'ye ekler. Aksi hâlde bölme yapılmaz: metni olan uzun kaydın hangi sözcüğünün hangi parçaya düştüğü
    bilinemez, o kayıt "uzun" diye reddedilir.
 
 Manifest biçimi (``senaryo.py`` çıktısı): başlık ``id|duygu|yogunluk|metin``, ayırıcı ``|``, tırnaklama yok;
 ``id`` kayıt dosyasının uzantısız adıdır (``üzgün_0012``). macOS Türkçe karakterli dosya adlarını NFD yazar;
 ``find_recording`` NFC ve NFD adları (ve büyük/küçük harf farkını, ``app.tr.tr_lower`` ile) eşler.
+Yalnızca sayıdan oluşan adlar (``0001.wav``; pandas bunları tamsayı okur ve ``1.wav`` arar) çıktıda
+``kayit_0001`` olur; eşleme ``rapor.json → id_eslemesi``'nde.
 
 Çıkış kodu: 0 başarı, 1 hata (klasör/manifest yok ya da bozuk), 2 hiçbir kayıt kabul edilmedi.
 """
@@ -83,6 +86,11 @@ BOLME_EN_UZUN_SN = 10.0
 DUZ_ARALIK_ST = 12.0         # duygu başına medyan perde aralığı bunun altındaysa "düz okunmuş" uyarısı
 ZORUNLU_DK = 30.0
 ONERILEN_SAAT = 3.0
+TRANSKRIPTSIZ_DOSYA = "metadata_transkriptsiz.csv"
+TRANSKRIPTSIZ_TALIMAT = (
+    "{n} klibin ({dk} dk) metni yok; bunlar metadata.csv'ye YAZILMADI (boş metin eğitimde 'nan' olarak okunur). "
+    "metadata_transkriptsiz.csv dosyasındaki 'ad||' satırlarını Whisper ile doldurun (ad|ham metin|normalize metin), "
+    "sonra metadata.csv'ye ekleyin.")
 TOHUM = 1234                 # doğrulama ayrımı için sabit tohum (tekrar üretilebilir)
 
 NEDENLER = ("gürültülü", "kırpılmış", "çok kısa", "uzun", "konuşma az")
@@ -111,6 +119,24 @@ def _temiz_metin(s: str) -> str:
 
 def _duygu_adi(s: str) -> str:
     return _anahtar((s or "").strip()) or "normal"
+
+
+# pandas'ın sayı/boş/mantıksal sanacağı adlar: eğitim deposu metadata'yı pandas ile okur; "0001" tamsayı 1 olur
+# ve ön işleme "1.wav" arayıp kaydı sessizce atlar, "nan"/"null" ise boş (NaN) okunur.
+_PANDAS_SAYI_RE = re.compile(r"^[0-9.eE+\-]+$")
+_PANDAS_OZEL = frozenset("""
+nan -nan na n/a null none true false inf -inf +inf infinity -infinity #n/a #n/a n/a #na -1.#ind -1.#qnan
+1.#ind 1.#qnan <na>
+""".split())
+ID_ONEK = "kayit_"
+
+
+def pandas_tuzagi_mi(kid: str) -> bool:
+    """Ad, pandas ``read_csv`` tarafından metin olarak değil sayı/NaN/mantıksal olarak okunur mu?"""
+    k = kid.strip()
+    if _PANDAS_SAYI_RE.match(k) and any(c.isdigit() for c in k):
+        return True
+    return _anahtar(k) in _PANDAS_OZEL
 
 
 def _duygu_from_ad(ad: str) -> str:
@@ -394,16 +420,29 @@ def prepare(kayitlar: str | Path, manifest: str | Path | None, cikti: str | Path
 
     kabul: list[dict] = []
     red: list[dict] = []
+    id_eslemesi: dict[str, str] = {}               # pandas tuzağına düşen ad → çıktı adı ("0001" → "kayit_0001")
+    tum_idler = {g["id"] for g in girdiler}
+
+    def cikti_id(kid: str) -> str:
+        """Çıktı adı: pandas'ın sayı sanacağı adların başına ``kayit_`` eklenir (çakışırsa ``_2`` …)."""
+        if not pandas_tuzagi_mi(kid):
+            return kid
+        aday, n = ID_ONEK + kid, 2
+        while aday in tum_idler or aday in id_eslemesi.values():
+            aday, n = f"{ID_ONEK}{kid}_{n}", n + 1
+        id_eslemesi[kid] = aday
+        return aday
 
     def reddet(kid: str, neden: str, ayrinti: str = "") -> None:
         red.append({"id": kid, "neden": neden, "ayrinti": ayrinti})
 
     def denetle_ve_yaz(kid: str, girdi: dict, cikis: np.ndarray, olcum: np.ndarray, metin: str | None,
-                       bolum: bool) -> None:
+                       bolum: bool, red_adi: str | None = None) -> None:
+        """``kid`` çıktı adı; ``red_adi`` reddedilirse rapora yazılacak ad (kullanıcının verdiği ad)."""
         a = analyze_array(olcum, sr)
         neden = check_clip(cikis, sr, a, max_s, min_snr)
         if neden:
-            reddet(kid, neden, _ayrinti(neden, len(cikis) / sr, a, max_s, min_snr))
+            reddet(red_adi or kid, neden, _ayrinti(neden, len(cikis) / sr, a, max_s, min_snr))
             return
         if metin:
             raw = _temiz_metin(metin)
@@ -420,7 +459,7 @@ def prepare(kayitlar: str | Path, manifest: str | Path | None, cikti: str | Path
                       "std_semitones": f0.get("std_semitones", 0.0), "bolundu": bolum})
 
     for i, g in enumerate(girdiler):
-        kid = g["id"]
+        kid = g["id"]                                # red/eksik listelerinde kullanıcının verdiği ad
         if ilerleme:
             ilerleme(i, len(girdiler), kid)
         if g.get("yol") is None:
@@ -440,24 +479,28 @@ def prepare(kayitlar: str | Path, manifest: str | Path | None, cikti: str | Path
         if wav.size:
             wav = wav - float(np.mean(wav))          # DC kayması
         cikis = trim_silence(wav, sr, threshold_db=KIRPMA_DB, pad_ms=KIRPMA_PAY_MS)
+        cid = cikti_id(kid)
         if bol and len(cikis) > BOLME_EN_UZUN_SN * sr:
             pay = int(OLCUM_PAY_MS * sr / 1000)
             for k, (b, e) in enumerate(_bol(cikis, sr), 1):
                 parca = trim_silence(cikis[b:e], sr, threshold_db=KIRPMA_DB, pad_ms=KIRPMA_PAY_MS)
                 olcum = cikis[max(0, b - pay): min(len(cikis), e + pay)]
-                denetle_ve_yaz(f"{kid}_{k:02d}", g, parca, olcum, None, True)
+                denetle_ve_yaz(f"{cid}_{k:02d}", g, parca, olcum, None, True)
             continue
         olcum = trim_silence(wav, sr, threshold_db=KIRPMA_DB, pad_ms=OLCUM_PAY_MS)
-        denetle_ve_yaz(kid, g, cikis, olcum, g.get("metin"), False)
+        denetle_ve_yaz(cid, g, cikis, olcum, g.get("metin"), False, red_adi=kid)
 
-    # doğrulama ayrımı ve metadata
-    val = _dogrulama_sec(kabul, float(dogrulama))
+    # doğrulama ayrımı ve metadata. Metinsiz klipler (transkriptsiz bölme / .txt'siz kayıt) metadata.csv'ye
+    # YAZILMAZ: eğitim deposu pandas ile okur, boş alan NaN → "nan" metniyle eğitilir. Ayrı dosyaya gider.
+    metinli = [k for k in kabul if k["raw"]]
+    metinsiz = [k for k in kabul if not k["raw"]]
+    val = _dogrulama_sec(metinli, float(dogrulama))
     if dogrulama > 0 and not val:
-        uyarilar.append("Doğrulama kümesi ayrılamadı: en az 2 kabul edilmiş kayıt gerekir.")
-    egitim = [k for k in kabul if k["id"] not in val]
-    dogru = [k for k in kabul if k["id"] in val]
+        uyarilar.append("Doğrulama kümesi ayrılamadı: en az 2 kabul edilmiş, metinli kayıt gerekir.")
+    egitim = [k for k in metinli if k["id"] not in val]
+    dogru = [k for k in metinli if k["id"] in val]
     for k in kabul:
-        k["bolum"] = "dogrulama" if k["id"] in val else "egitim"
+        k["bolum"] = "transkriptsiz" if not k["raw"] else ("dogrulama" if k["id"] in val else "egitim")
 
     def yaz(path: Path, rows: list[dict]) -> None:
         with path.open("w", encoding="utf-8", newline="\n") as f:
@@ -465,8 +508,11 @@ def prepare(kayitlar: str | Path, manifest: str | Path | None, cikti: str | Path
                 f.write(f"{r['id']}|{r['raw']}|{r['norm']}\n")
 
     yaz(cdizin / "metadata.csv", egitim)
-    if dogru:
-        yaz(cdizin / "metadata_val.csv", dogru)
+    for ad, satirlar in (("metadata_val.csv", dogru), (TRANSKRIPTSIZ_DOSYA, metinsiz)):
+        if satirlar:
+            yaz(cdizin / ad, satirlar)
+        else:
+            (cdizin / ad).unlink(missing_ok=True)    # önceki çalıştırmadan kalan, artık geçersiz dosya
 
     # rapor
     toplam_sn = round(sum(k["sn"] for k in kabul), 2)
@@ -495,9 +541,13 @@ def prepare(kayitlar: str | Path, manifest: str | Path | None, cikti: str | Path
     if girdiler and len(red) > 0.2 * len(girdiler):
         uyarilar.append(f"Kayıtların %{round(100 * len(red) / len(girdiler))}'i reddedildi; kayıt ortamını ve "
                         "mikrofon seviyesini gözden geçirin (bkz. docs/KAYIT_REHBERI.md).")
-    if any(k["bolundu"] for k in kabul):
-        uyarilar.append("Bölünen parçaların metin sütunları boş; eğitimden önce bir ASR ile (ör. Whisper) "
-                        "doldurun, boş metinli satırlar eğitimde kullanılamaz.")
+    if metinsiz:
+        uyarilar.append(TRANSKRIPTSIZ_TALIMAT.format(n=len(metinsiz), dk=_tr_sayi(sum(k["sn"] for k in metinsiz) / 60)))
+    if id_eslemesi:
+        ornek = ", ".join(f"{a} → {b}" for a, b in list(id_eslemesi.items())[:5])
+        uyarilar.append(f"{len(id_eslemesi)} kayıt adı yalnızca sayıdan oluşuyor (eğitim deposu pandas ile okuyunca "
+                        f"sayıya çevirir ve dosyayı bulamaz); çıktıda başlarına '{ID_ONEK}' eklendi: {ornek}"
+                        + (" …" if len(id_eslemesi) > 5 else "") + " (tam liste: rapor.json → id_eslemesi).")
     yerli = {k["id"] for k in kabul}
     artik = sorted(p.name for p in wdizin.glob("*.wav") if _nfc(p.stem) not in yerli)
     if artik:
@@ -516,6 +566,9 @@ def prepare(kayitlar: str | Path, manifest: str | Path | None, cikti: str | Path
         "kabul": len(kabul),
         "egitim_adet": len(egitim),
         "dogrulama_adet": len(dogru),
+        "transkriptsiz_adet": len(metinsiz),
+        "transkriptsiz_dk": round(sum(k["sn"] for k in metinsiz) / 60.0, 2),
+        "id_eslemesi": id_eslemesi,
         "red": red,
         "eksik": eksik,
         "yeterlilik": yeterlilik,
@@ -534,7 +587,8 @@ def ozet_metni(rapor: dict, cikti: str | Path) -> str:
     """Raporun Türkçe konsol özeti."""
     s: list[str] = []
     s.append(f"Veri hazırlandı → {cikti}")
-    s.append(f"  Kabul: {rapor['kabul']} klip (eğitim {rapor['egitim_adet']}, doğrulama {rapor['dogrulama_adet']}), "
+    s.append(f"  Kabul: {rapor['kabul']} klip (eğitim {rapor['egitim_adet']}, doğrulama {rapor['dogrulama_adet']}, "
+             f"metinsiz {rapor['transkriptsiz_adet']} → {TRANSKRIPTSIZ_DOSYA}), "
              f"red: {len(rapor['red'])}, eksik: {len(rapor['eksik'])}")
     s.append(f"  Toplam ses: {_tr_sayi(rapor['toplam_dk'])} dk ({_tr_sayi(rapor['toplam_saat'], 2)} sa) — "
              f"yeterlilik: {rapor['yeterlilik']}")

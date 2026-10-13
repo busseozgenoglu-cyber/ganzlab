@@ -263,6 +263,7 @@ def sahte(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "T3_FINETUNED", None)
     monkeypatch.setattr(config, "CHATTERBOX_LOCAL_DIR", None)
     monkeypatch.setattr(config, "T3_EMOTION_TAGS", False)
+    monkeypatch.setattr(config, "T3_EMOTION_SET", "")
     monkeypatch.setattr(config, "DEVICE", "cpu")
     kayit["sinif"] = ChatterboxMultilingualTTS
     kayit["tmp"] = tmp_path
@@ -340,6 +341,39 @@ def test_chatterbox_duygu_etiketi(sahte, monkeypatch):
     m.generate("Merhaba dünya.", emotion="mutlu")
     assert m._model.calls[-1]["text"] == "Merhaba dünya."     # kapalıyken eklenmez
     assert ChatterboxBackend.tag_text("Selam", "  ") == "Selam" and ChatterboxBackend.tag_text("Selam", "x") == "Selam"
+
+
+def test_duygu_kumesinde_olmayan_etiket_almaz(sahte, monkeypatch):
+    from app.backends.chatterbox import DEFAULT_EMOTION_SET, emotion_set
+
+    assert len(DEFAULT_EMOTION_SET) == 19 and "normal" not in DEFAULT_EMOTION_SET
+    assert emotion_set() == frozenset(DEFAULT_EMOTION_SET)
+    m = ChatterboxBackend(device="cpu")
+    monkeypatch.setattr(config, "T3_EMOTION_TAGS", True)
+    for duygu in ("çocuksu", "vurgulu", "hızlı", "yavaş"):          # PROFILES'ta var, ince ayar bankasında yok
+        m.generate("Merhaba dünya.", emotion=duygu)
+    m.generate("Merhaba dünya.", emotion="sıkılmış")
+    texts = [c["text"] for c in m._model.calls]
+    assert texts[:4] == ["Merhaba dünya."] * 4 and texts[4] == "[sıkılmış] Merhaba dünya."
+    assert m.info()["emotion_set"] == sorted(DEFAULT_EMOTION_SET)
+
+
+def test_duygu_kumesi_ortam_degiskeninden(sahte, monkeypatch):
+    import unicodedata
+
+    from app.backends.chatterbox import emotion_set
+
+    monkeypatch.setattr(config, "T3_EMOTION_TAGS", True)
+    monkeypatch.setattr(config, "T3_EMOTION_SET", " Mutlu , ÜZGÜN,normal, ")
+    assert emotion_set() == frozenset({"mutlu", "üzgün"})           # tr_lower + kırpma; normal hariç
+    m = ChatterboxBackend(device="cpu")
+    for duygu in ("mutlu", "üzgün", "kızgın", "heyecanlı", "normal"):
+        m.generate("Tamam.", emotion=duygu)
+    # NFD (ayrışık) yazılmış "üzgün" de NFC kümede eşleşir
+    m.generate("Tamam.", emotion=unicodedata.normalize("NFD", "üzgün"))
+    texts = [c["text"] for c in m._model.calls]
+    assert texts == ["[mutlu] Tamam.", "[üzgün] Tamam.", "Tamam.", "Tamam.", "Tamam.", "[üzgün] Tamam."]
+    assert m.info()["emotion_set"] == ["mutlu", "üzgün"]
 
 
 def test_chatterbox_conds_ic_modele_delege(sahte):

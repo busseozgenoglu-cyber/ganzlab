@@ -27,7 +27,20 @@ Gerçek API (``SWivid/F5-TTS``, ``src/f5_tts/api.py`` — WebFetch ile doğrulan
   ile Türkçe zorlayarak transkripti kendimiz çıkarır ve (yol, değişiklik zamanı) anahtarıyla önbelleğe alırız;
   bu başarısız olursa boş metni F5'e bırakırız (o da kendi ASR'sini çalıştırır). Hız ve doğruluk için
   ``ref_text`` vermek (kıyaslama betiği verebilir) her zaman daha iyidir.
-* F5, referans kaydı ~12 sn'ye kırpar (sessizliklerden); 5–10 sn temiz referans idealdir.
+* F5 (``utils_infer.preprocess_ref_audio_text``) referansı ≤ 12 sn'ye kırpar: önce
+  ``split_on_silence(min_silence_len=1000, silence_thresh=-50, keep_silence=1000, seek_step=10)`` parçalarını
+  toplam 6 sn'yi geçtikten sonra 12 sn'yi aşacak parçaya kadar biriktirir; hâlâ > 12 sn ise aynısını
+  ``min_silence_len=100, silence_thresh=-40`` ile dener; yine uzunsa ilk 12 sn'yi keser; sonra kenar
+  sessizliklerini (−42 dBFS) atıp 50 ms sessizlik ekler. **Verilen ``ref_text`` ise olduğu gibi kullanılır** —
+  14 sn'lik bir kaydın tam transkripti, kırpılmış 12 sn'lik sesle eşleşmez (hizalama ve süre tahmini bozulur).
+  Bu yüzden referans 12 sn'den uzunsa onu kendimiz AYNI mantıkla kırpar (``clip_reference``; pydub varsa birebir
+  aynı çağrılar, yoksa numpy yaklaşımı), geçici WAV'ı (yol + değişiklik zamanı ile) önbelleğe alır, transkripti
+  bu kırpılmış sesten çıkarır ve ``infer``'e de bu dosyayı veririz. F5'in kendi ön işlemi ≤ 12 sn'lik dosyada
+  yalnızca uzun sessizlikleri kısaltır; metin sesle eşleşmeye devam eder. 5–10 sn temiz referans idealdir.
+* Tohum tek kullanımlıktır: ``seed()`` ile verilen tohum yalnızca bir sonraki ``generate``'te kullanılır, sonra
+  silinir. Motor tohumsuz isteklerde ``seed()`` çağırmaz; tohum kalıcı olsaydı önceki isteğin tohumu sonraki
+  tohumsuz isteklere (ve QC'nin "tohum" yeniden denemesine) sızar, hep aynı ses üretilirdi. Tohum yoksa ``infer``'e
+  ``seed`` hiç gönderilmez (F5 her çağrıda rastgele seçer).
 
 Model kartı (huggingface.co/marduk-ra/F5-TTS-Turkish): dosyalar ``f5_tts_turkish_1000000.safetensors`` (ayrıca
 ``…_400000`` ve ``…_650000`` ara adımları, her biri ~1,35 GB) ve ``vocab.txt``; temel model ``SWivid/F5-TTS``;
@@ -45,7 +58,9 @@ from __future__ import annotations
 
 import inspect
 import logging
+import hashlib
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +77,132 @@ INDIRME_IPUCU = ("Ağırlıkları huggingface.co/marduk-ra/F5-TTS-Turkish adresi
                  "ortam değişkenlerine yazın.")
 VARSAYILAN_MODEL = "F5TTS_v1_Base"
 VARSAYILAN_NFE = 32
+# F5'in referans kırpma mantığı (utils_infer.preprocess_ref_audio_text) — milisaniye / dBFS
+F5_REF_MAX_MS = 12000
+F5_REF_MIN_MS = 6000
+# (min_silence_len, silence_thresh): önce uzun ve derin sessizlikler, olmazsa kısa ve sığ sessizlikler
+F5_SPLIT_ADIMLARI = ((1000, -50), (100, -40))
+F5_KEEP_SILENCE_MS = 1000
+F5_KENAR_ESIK_DB = -42
+F5_SON_SESSIZLIK_MS = 50
+_ADIM_MS = 10          # pydub seek_step ile aynı çözünürlük
+
+
+def _biriktir(parcalar: list, uzunluk, bos, birlestir=lambda a, b: a + b):
+    """F5'in döngüsü: 6 sn'yi geçtikten sonra 12 sn'yi aşacak ilk parçada durur (uzunluklar ms)."""
+    dalga = bos
+    for parca in parcalar:
+        if uzunluk(dalga) > F5_REF_MIN_MS and uzunluk(dalga) + uzunluk(parca) > F5_REF_MAX_MS:
+            break
+        dalga = birlestir(dalga, parca)
+    return dalga
+
+
+def _kirp_pydub(kaynak: str, hedef: Path) -> float:
+    """``preprocess_ref_audio_text``'in birebir aynısı (pydub ile); dönüş: kırpılmış süre (sn)."""
+    from pydub import AudioSegment, silence
+
+    aseg = AudioSegment.from_file(kaynak)
+    dalga = aseg
+    for min_sessizlik, esik in F5_SPLIT_ADIMLARI:
+        parcalar = silence.split_on_silence(aseg, min_silence_len=min_sessizlik, silence_thresh=esik,
+                                            keep_silence=F5_KEEP_SILENCE_MS, seek_step=_ADIM_MS)
+        dalga = _biriktir(parcalar, len, AudioSegment.silent(duration=0))
+        if len(dalga) <= F5_REF_MAX_MS:
+            break
+    if len(dalga) > F5_REF_MAX_MS:
+        dalga = dalga[:F5_REF_MAX_MS]
+    bas = silence.detect_leading_silence(dalga, silence_threshold=F5_KENAR_ESIK_DB)
+    dalga = dalga[bas:]
+    son = silence.detect_leading_silence(dalga.reverse(), silence_threshold=F5_KENAR_ESIK_DB)
+    if son > 0:
+        dalga = dalga[: len(dalga) - son]
+    dalga = dalga + AudioSegment.silent(duration=F5_SON_SESSIZLIK_MS, frame_rate=dalga.frame_rate)
+    dalga.export(str(hedef), format="wav")
+    return len(dalga) / 1000.0
+
+
+def _kare_db(x: np.ndarray, sr: int, pencere_ms: int) -> np.ndarray:
+    """Her ``_ADIM_MS`` adımda başlayan ``pencere_ms``'lik pencerenin dBFS değeri (pydub'ın yaklaşığı)."""
+    adim = max(1, sr * _ADIM_MS // 1000)
+    pencere = max(1, sr * pencere_ms // 1000)
+    if len(x) < pencere:
+        return np.zeros(0)
+    kare = np.concatenate([[0.0], np.cumsum(x.astype(np.float64) ** 2)])
+    basl = np.arange(0, len(x) - pencere + 1, adim)
+    rms = np.sqrt((kare[basl + pencere] - kare[basl]) / pencere)
+    return 20 * np.log10(np.maximum(rms, 1e-10))
+
+
+def _sessiz_olmayan_parcalar(x: np.ndarray, sr: int, min_sessizlik: int, esik: float) -> list[np.ndarray]:
+    """``pydub.silence.split_on_silence`` yaklaşığı (keep_silence dahil; komşu parçalar sessizliği paylaşır)."""
+    db = _kare_db(x, sr, min_sessizlik)
+    ms = lambda i: i * sr // 1000  # noqa: E731 - ms → örnek
+    sessiz: list[list[int]] = []                       # [başlangıç_ms, bitiş_ms]
+    for i in np.flatnonzero(db < esik):
+        bas = int(i) * _ADIM_MS
+        if sessiz and bas <= sessiz[-1][1]:
+            sessiz[-1][1] = bas + min_sessizlik
+        else:
+            sessiz.append([bas, bas + min_sessizlik])
+    toplam_ms = len(x) * 1000 // sr
+    araliklar, onceki = [], 0
+    for bas, bit in sessiz:
+        if bas > onceki:
+            araliklar.append([onceki, bas])
+        onceki = bit
+    if onceki < toplam_ms:
+        araliklar.append([onceki, toplam_ms])
+    if not araliklar:
+        return []
+    genis = [[max(0, b - F5_KEEP_SILENCE_MS), min(toplam_ms, e + F5_KEEP_SILENCE_MS)] for b, e in araliklar]
+    for a, b in zip(genis, genis[1:]):                 # örtüşen tutulan sessizlik ortadan bölünür
+        if a[1] > b[0]:
+            orta = (a[1] + b[0]) // 2
+            a[1], b[0] = orta, orta
+    return [x[ms(b):ms(e)] for b, e in genis]
+
+
+def _kirp_numpy(kaynak: str, hedef: Path) -> float:
+    """pydub yoksa aynı mantığın numpy yaklaşığı (soundfile ile okur/yazar)."""
+    import soundfile as sf
+
+    x, sr = sf.read(kaynak, dtype="float32", always_2d=True)
+    x = x.mean(axis=1)
+    uzunluk = lambda d: len(d) * 1000 // sr  # noqa: E731
+    dalga = x
+    for min_sessizlik, esik in F5_SPLIT_ADIMLARI:
+        parcalar = _sessiz_olmayan_parcalar(x, sr, min_sessizlik, esik)
+        dalga = _biriktir(parcalar, uzunluk, np.zeros(0, dtype=np.float32),
+                          lambda a, b: np.concatenate([a, b]))
+        if uzunluk(dalga) <= F5_REF_MAX_MS:
+            break
+    if uzunluk(dalga) > F5_REF_MAX_MS:
+        dalga = dalga[: F5_REF_MAX_MS * sr // 1000]
+    db = _kare_db(dalga, sr, _ADIM_MS)
+    sesli = np.flatnonzero(db >= F5_KENAR_ESIK_DB)
+    if sesli.size:
+        adim = sr * _ADIM_MS // 1000
+        dalga = dalga[int(sesli[0]) * adim: (int(sesli[-1]) + 1) * adim]
+    dalga = np.concatenate([dalga, np.zeros(F5_SON_SESSIZLIK_MS * sr // 1000, dtype=np.float32)])
+    sf.write(str(hedef), dalga, sr, subtype="PCM_16")
+    return len(dalga) / sr
+
+
+def ses_suresi(yol: str) -> float | None:
+    """Ses dosyasının süresi (sn); okunamazsa ``None``."""
+    try:
+        import soundfile as sf
+
+        return float(sf.info(yol).duration)
+    except Exception:  # noqa: BLE001 - biçim soundfile ile okunamıyorsa pydub denenir
+        pass
+    try:
+        from pydub import AudioSegment
+
+        return len(AudioSegment.from_file(yol)) / 1000.0
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _filter_kwargs(fn: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +267,8 @@ class F5TurkishBackend(BaseBackend):
         self.nfe_step = _env_int("F5_TR_NFE", VARSAYILAN_NFE)
         self._seed: int | None = None
         self._ref_text_cache: dict[tuple[str, float], str] = {}
+        self._clip_cache: dict[tuple[str, float], str] = {}
+        self.clip_dir = Path(tempfile.gettempdir()) / "sesklon-f5-ref"     # kırpılmış referansların önbelleği
         self.model_id = f"f5-tts-turkish:{ckpt.name}"
 
         log.info("F5-TTS Türkçe yükleniyor: %s (yapılandırma=%s, cihaz=%s)", ckpt, self.config_name, device)
@@ -137,7 +280,7 @@ class F5TurkishBackend(BaseBackend):
 
     # --- motorun kullandığı yüz ---
     def seed(self, seed: int) -> None:
-        """Tohumu saklar (her ``infer``'e geçirilir) ve varsa PyTorch tohumunu da verir."""
+        """Tohumu bir sonraki ``generate`` için saklar (tek kullanımlık) ve varsa PyTorch tohumunu da verir."""
         self._seed = int(seed)
         try:
             import torch
@@ -146,6 +289,38 @@ class F5TurkishBackend(BaseBackend):
         manual_seed = getattr(torch, "manual_seed", None)
         if callable(manual_seed):
             manual_seed(self._seed)
+
+    def clip_reference(self, ref_path: str) -> str:
+        """Referans F5'in 12 sn sınırından uzunsa F5'in mantığıyla kırpılmış geçici WAV'ın yolunu döndürür.
+
+        Kısa (≤ 12 sn) ya da süresi okunamayan referans olduğu gibi döner. Kırpılmış dosya yol + değişiklik zamanı
+        ile önbelleğe alınır (aynı dosya için tekrar kırpılmaz, transkript önbelleği de korunur).
+        """
+        try:
+            mtime = Path(ref_path).stat().st_mtime
+        except OSError:
+            return ref_path
+        key = (ref_path, mtime)
+        onceki = self._clip_cache.get(key)
+        if onceki and Path(onceki).is_file():
+            return onceki
+        sure = ses_suresi(ref_path)
+        if sure is None or sure * 1000 <= F5_REF_MAX_MS:
+            return ref_path
+        self.clip_dir.mkdir(parents=True, exist_ok=True)
+        ozet = hashlib.sha1(f"{ref_path}|{mtime}".encode("utf-8")).hexdigest()[:12]
+        hedef = self.clip_dir / f"{Path(ref_path).stem}_{ozet}_12sn.wav"
+        try:
+            try:
+                yeni_sure = _kirp_pydub(ref_path, hedef)
+            except ImportError:
+                yeni_sure = _kirp_numpy(ref_path, hedef)
+        except Exception as e:  # noqa: BLE001 - kırpılamazsa F5 kendisi kırpar (transkript uyumsuz kalabilir)
+            log.warning("Referans 12 sn'ye kırpılamadı (%s): %s — F5 kendisi kırpacak", ref_path, e)
+            return ref_path
+        log.info("Referans %.1f sn > 12 sn: F5 mantığıyla %.1f sn'ye kırpıldı → %s", sure, yeni_sure, hedef)
+        self._clip_cache[key] = str(hedef)
+        return str(hedef)
 
     def transcript_for(self, ref_path: str) -> str:
         """Referansın Türkçe transkripti (Whisper; yavaş). Yol + değişiklik zamanı ile önbellekte tutulur.
@@ -179,6 +354,10 @@ class F5TurkishBackend(BaseBackend):
         ``audio_prompt_path`` zorunludur (F5'in varsayılan sesi yoktur). ``ref_text`` referansın transkriptidir;
         boşsa Whisper ile çıkarılır (yavaş, ilk çağrıda ASR modeli indirilir) — kıyaslama betiği hazır metni
         geçirebilir. ``language_id`` "tr" değilse uyarılır ama yine üretilir (model yalnızca Türkçe eğitildi).
+
+        Referans 12 sn'den uzunsa F5'in mantığıyla kırpılır ve hem transkript hem ``infer`` kırpılmış dosyayı
+        kullanır; bu durumda verilen ``ref_text`` tam kayda ait olduğundan yok sayılır (uyarı loglanır).
+        ``seed()`` ile verilen tohum yalnızca bu çağrıda kullanılır ve silinir; tohum yoksa F5 rastgele seçer.
         """
         if not audio_prompt_path:
             raise ValueError("F5-TTS referans kaydı olmadan üretemez: audio_prompt_path (bir ses klonu) gerekli.")
@@ -187,12 +366,22 @@ class F5TurkishBackend(BaseBackend):
         dil = tr_lower(str(language_id or "tr")).strip()
         if dil != "tr":
             log.warning("F5-TTS Türkçe modeli yalnızca Türkçe ile eğitildi; '%s' dili için çıktı kötü olabilir", dil)
-        ref = str(audio_prompt_path)
-        ref_text = str(ref_text or "").strip() or self.transcript_for(ref)
-        kwargs = _filter_kwargs(self._model.infer, {
+        tohum, self._seed = self._seed, None          # tek kullanımlık: sonraki tohumsuz isteklere sızmasın
+        tam = str(audio_prompt_path)
+        ref = self.clip_reference(tam)
+        ref_text = str(ref_text or "").strip()
+        if ref_text and ref != tam:
+            log.warning("Referans 12 sn'den uzun ve kırpıldı; verilen ref_text tam kayda ait olduğu için yok "
+                        "sayılıyor, transkript kırpılmış sesten çıkarılacak")
+            ref_text = ""
+        ref_text = ref_text or self.transcript_for(ref)
+        istek: dict[str, Any] = {
             "ref_file": ref, "ref_text": ref_text, "gen_text": text, "show_info": _f5_bilgi,
-            "nfe_step": int(self.nfe_step), "speed": float(speed), "remove_silence": False, "seed": self._seed,
-        })
+            "nfe_step": int(self.nfe_step), "speed": float(speed), "remove_silence": False,
+        }
+        if tohum is not None:
+            istek["seed"] = tohum
+        kwargs = _filter_kwargs(self._model.infer, istek)
         sonuc = self._model.infer(**kwargs)
         wav, sr = sonuc[0], sonuc[1]
         if wav is None:
@@ -208,4 +397,4 @@ class F5TurkishBackend(BaseBackend):
         return d
 
 
-__all__ = ["F5TurkishBackend"]
+__all__ = ["F5TurkishBackend", "ses_suresi"]
