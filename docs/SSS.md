@@ -224,6 +224,20 @@ Cihaz kendiliğinden `mps` seçilir. Python'un arm64 olduğundan emin olun
 kullanamaz. Bir işlem MPS'te hata verirse `PYTORCH_ENABLE_MPS_FALLBACK=1 ./run.sh` ya da `DEVICE=cpu` deneyin. Intel
 Mac'ler yalnızca CPU ile çalışır.
 
+### 14b. Mac'te üretim çok yavaş (gerçek zamanın 4–5 katı). Ne yapabilirim?
+
+PyTorch'un `mps` yolu Chatterbox'ta yavaştır. `pip install mlx-audio` kurup `TTS_BACKEND=chatterbox-mlx ./run.sh` ile
+MLX arka ucunu deneyin; hızı `cd backend && python -m app.bench --backend chatterbox-mlx --ref ses.wav` ile ölçün.
+Kalite kontrol bozuk parçaları yeniden ürettiği için bazı parçalar 2–3 kez üretilir; hız öncelikliyse istekte
+`"qc": false` verin. Not: MLX arka ucu `T3_FINETUNED` ince ayarını uygulamaz (ağırlıklar MLX'e dönüştürülmelidir).
+
+### 14c. Ses düz ve robotik; ayarlar fark etmiyor. Neden?
+
+Türkçedeki düzlük büyük ölçüde modelin kendi tonlama alışkanlığından gelir; `exaggeration`/`cfg_weight` aralığı ancak
+biraz açar. Önce ölçün: `python -m app.bench --reference-only ses.wav` referansınızın aralığını, `python -m app.bench
+--backend chatterbox --ref ses.wav` klonun aralığını verir. Klon referansın altında kalır; daha coşkulu bir referans
+(≥ 16 yarım ton) ilk ve ucuz çözümdür. Yetmezse ince ayar: [finetune/README.md](../finetune/README.md).
+
 ### 15. Hangi dilleri destekliyor?
 
 Chatterbox Multilingual'ın 23 dili: Türkçe, İngilizce, Almanca, Fransızca, İspanyolca, İtalyanca, Portekizce,

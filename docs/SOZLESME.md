@@ -84,7 +84,7 @@ Analiz şeması (JSON'a yazılabilir, tüm sayılar yuvarlanmış):
   "duration": 12.3, "speech_ratio": 0.82, "snr_db": 31.5, "noise_floor_dbfs": -58.0,
   "peak_dbfs": -1.2, "rms_dbfs": -20.1, "clipping_ratio": 0.0, "dc_offset": 0.001, "bandwidth_hz": 7800,
   "reverb": "düşük",
-  "f0": {"median_hz": 180.0, "min_hz": 110.0, "max_hz": 290.0, "range_semitones": 16.8, "voiced_ratio": 0.6,
+  "f0": {"median_hz": 180.0, "min_hz": 110.0, "max_hz": 290.0, "range_semitones": 16.8, "std_semitones": 3.1, "voiced_ratio": 0.6,
          "label": "kadın|erkek|belirsiz"},
   "speaking_rate": {"syllables_per_sec": 5.1, "label": "yavaş|normal|hızlı"},
   "pauses": {"count": 4, "mean_ms": 420, "median_ms": 380, "per_minute": 19.5, "scale": 1.05},

@@ -141,7 +141,7 @@ def test_temel_hiz_yanki_bant_ve_puan(temel):
 def test_sema_ve_json(temel):
     r = temel[1]
     assert set(r) == SEMA_ANAHTARLARI
-    assert set(r["f0"]) == {"median_hz", "min_hz", "max_hz", "range_semitones", "voiced_ratio", "label"}
+    assert set(r["f0"]) == {"median_hz", "min_hz", "max_hz", "range_semitones", "std_semitones", "voiced_ratio", "label"}
     assert set(r["speaking_rate"]) == {"syllables_per_sec", "label"}
     assert set(r["pauses"]) == {"count", "mean_ms", "median_ms", "per_minute", "scale"}
     assert set(r["breaths"]) == {"count", "positions_s"}

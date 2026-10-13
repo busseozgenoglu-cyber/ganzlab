@@ -61,9 +61,11 @@ sesklon/
 │                 consistency.py (tutarlılık) · timing.py (altyazı) · enhance.py (kayıt iyileştirme)
 │                 prosody.py (duraklama/nefes/mastering) · analysis.py (kayıt analizi) · audio.py
 │                 jobs.py (iş kuyruğu) · db.py (SQLite) · tr.py (Türkçe yardımcılar)
+│                 backends/ (takılabilir model arka uçları) · bench.py (doğallık kıyaslaması)
 ├─ backend/tests/ pytest paketi (sahte motorla uçtan uca; GPU/model gerekmez)
+├─ finetune/      Türkçe duygulu ince ayar hattı: kayıt senaryoları → veri hazırlama → LoRA eğitimi → değerlendirme
 ├─ frontend/      React + Vite arayüz
-├─ docs/          KAYIT_REHBERI · ETIKETLER · API · SSS · SOZLESME, SOZLESME2 (geliştirici sözleşmeleri)
+├─ docs/          KAYIT_REHBERI · ETIKETLER · API · SSS · SOZLESME, SOZLESME2, SOZLESME3 (geliştirici sözleşmeleri)
 └─ Dockerfile · docker-compose.yml (GPU) · docker-compose.cpu.yml · run.sh (Linux/macOS) · run.ps1 (Windows)
 ```
 
@@ -304,6 +306,14 @@ Docker'da `/data/pronunciations.json`) da çalışmaya devam eder.
 | `DEVICE` | otomatik | `cuda` / `mps` / `cpu` |
 | `PRELOAD` | `1` | Modeli açılışta arka planda yükle |
 | `T3_MODEL` | `v3` | Chatterbox Multilingual sürümü |
+| `TTS_BACKEND` | `chatterbox` | Sentez arka ucu: `chatterbox` (PyTorch), `chatterbox-mlx` (Apple Silicon, `pip install mlx-audio`), `f5-tr`, `xtts` (ikisi yalnızca A/B kıyas için, ticari değil) |
+| `T3_FINETUNED` | boş | İnce ayarlı T3 ağırlıkları (`.safetensors`); bkz. [finetune/README.md](finetune/README.md) |
+| `T3_EMOTION_TAGS` | `0` | `1`: ince ayar verisi `[duygu]` etiketliyse metnin başına aynı etiketi ekle |
+| `T3_EMOTION_SET` | boş | Etiket alacak duygular (virgüllü; boşsa ince ayar bankasındaki 19 duygu). Bir alt kümeyle eğittiyseniz aynı listeyi verin |
+| `CHATTERBOX_LOCAL_DIR` | boş | Chatterbox ağırlıklarını indirmek yerine bu klasörden yükle |
+| `MLX_MODEL` | `mlx-community/chatterbox-multilingual-v3` | `chatterbox-mlx` arka ucunun modeli |
+| `F5_TR_CKPT`, `F5_TR_VOCAB` | boş | `f5-tr` arka ucu: marduk-ra/F5-TTS-Turkish ağırlığı ve `vocab.txt` (`F5_TR_MODEL`, `F5_TR_NFE` isteğe bağlı) |
+| `XTTS_MODEL` | `tts_models/multilingual/multi-dataset/xtts_v2` | `xtts` arka ucu (`COQUI_TOS_AGREED=1` gerekir) |
 | `DATA_DIR` | `backend/data` (Docker: `/data`) | Sesler, çıktılar, SQLite, telaffuz sözlükleri (Docker'da model önbelleği de burada) |
 | `MAX_TEXT_CHARS` | `5000` | Tek istekte en fazla karakter (diyalogda tüm senaryo) |
 | `MAX_UPLOAD_MB` | `60` | Yükleme sınırı |
@@ -356,6 +366,31 @@ curl -X POST http://localhost:8000/api/tts -H "Content-Type: application/json" -
   "speakers": {"Ayşe": "<ses_id_1>", "Mehmet": "<ses_id_2>"}, "narrator_voice_id": "<ses_id_3>",
   "format": "mp3", "wait": true }'
 ```
+
+## Doğallığı ölçmek ve modeli iyileştirmek
+
+Ön/son işleme katmanları modelin kendi tonlamasını genişletemez. Sesin "robotik" olup olmadığı tek bir sayıyla
+ölçülür: **tonlama aralığı** (perdenin p5–p95 aralığı, yarım ton). Gerçek ifadeli konuşma ve Gemini TTS ≈ 17–18
+yarım ton; Chatterbox'ın Türkçesi ≈ 13–14 yarım tonda kalıyor.
+
+```bash
+cd backend
+# 1) Referans kayıtlarınız ne kadar ifadeli? (model gerekmez)
+python -m app.bench --reference-only sakin.wav coskulu.wav
+# 2) Model + referans: 37 Türkçe cümle (soru, ünlem, duygular, sayılar, günlük konuşma)
+python -m app.bench --backend chatterbox --ref coskulu.wav --out temel.json
+python -m app.bench --backend chatterbox --ref coskulu.wav --exaggeration 0.8 --cfg-weight 0.3 --out ayar.json
+python -m app.bench --compare temel.json ayar.json
+# 3) Apple Silicon'da hız: MLX arka ucu (pip install mlx-audio)
+python -m app.bench --backend chatterbox-mlx --ref coskulu.wav --out mlx.json
+```
+
+Her cümle için tonlama aralığı, perde sapması, hece/sn, dinamik aralık, gerçek zaman oranı (RTF) ve kalite kontrol
+puanı ölçülür; özet "ifadeli / orta / düz" kararı ve öneriler verir. `--pipeline` tüm SesKlon zincirini ölçer.
+
+Ölçüm hâlâ < 14 yarım tonsa çözüm **ince ayar**dır: 3–5 saat ifadeli Türkçe kayıtla Chatterbox'ın T3 modeline LoRA
+uygulanır. Kayıt senaryoları (20 duygu × 30 cümle), veri hazırlama, eğitim ve kabul ölçütü (≥ 17 yarım ton) hazır —
+adım adım: [finetune/README.md](finetune/README.md). Sonuç `T3_FINETUNED=…` ile takılır.
 
 ## Sorun giderme
 

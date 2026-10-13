@@ -37,7 +37,7 @@ from . import lexicon as lex
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("sesklon")
 
-VERSION = "4.0.0"
+VERSION = "4.1.0"
 MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
 PARTIAL_DIR = config.OUTPUT_DIR / "partial"
 PARTIAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -285,6 +285,22 @@ def _effective_settings(req: TTSRequest) -> dict:
 
 
 # ---------- sistem ----------
+_BACKEND_CATALOG: list[dict] | None = None
+
+
+def _backend_catalog() -> list[dict]:
+    """Arka uç listesi (kurulu mu / lisans); ucuz ama her istekte find_spec yapmamak için bir kez hesaplanır."""
+    global _BACKEND_CATALOG
+    if _BACKEND_CATALOG is None:
+        try:
+            from . import backends
+
+            _BACKEND_CATALOG = backends.describe()
+        except Exception:  # noqa: BLE001 - sağlık ucu arka uç listesi yüzünden düşmesin
+            _BACKEND_CATALOG = []
+    return _BACKEND_CATALOG
+
+
 @app.get("/api/health")
 def health():
     eng = get_engine()
@@ -293,6 +309,9 @@ def health():
         "version": VERSION,
         "device": eng.device,
         "model": eng.model_name,
+        "backend": getattr(eng, "backend_name", config.TTS_BACKEND),
+        "backends": _backend_catalog(),
+        "finetuned": bool(config.T3_FINETUNED) and getattr(eng, "backend_name", config.TTS_BACKEND) == "chatterbox",
         "model_loaded": eng.loaded,
         "model_loading": eng.loading,
         "model_error": eng.load_error,

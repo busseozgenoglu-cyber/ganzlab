@@ -169,7 +169,11 @@ function ModelStatus({ health, warming, onWarm }) {
   return (
     <div className="status" aria-live="polite">
       <span className={`badge ${dev.cls}`} title={dev.title}>{dev.label}</span>
-      {st === 'ready' && <span className="badge ok" title={health.model || 'Model'}><span className="dot on" /> Model hazır</span>}
+      {st === 'ready' && (
+        <span className="badge ok" title={[health.model || 'Model', health.backend && `arka uç: ${health.backend}`, health.device && `cihaz: ${health.device}`].filter(Boolean).join(' • ')}>
+          <span className="dot on" /> Model hazır{health.finetuned ? ' • ince ayarlı' : ''}
+        </span>
+      )}
       {st === 'loading' && (
         <span className="badge info model-loading" title={health.model_message || 'İlk açılışta model indirilir ve belleğe yüklenir.'}>
           <span className="spinner" aria-hidden="true" /> Model yükleniyor{pct != null ? ` %${pct}` : '…'}
